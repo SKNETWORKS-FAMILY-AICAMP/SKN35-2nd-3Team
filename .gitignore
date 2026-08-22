@@ -33,6 +33,15 @@ dist/
 # Logs
 *.log
 
-# Data (raw/processed datasets are gitignored — too large / regenerable)
-data/
+# Data (raw/processed datasets are gitignored — too large, shared via cloud storage instead)
+# keep folder structure + README tracked, ignore actual data files
+data/*
+!data/README.md
+!data/raw/
+!data/processed/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
 scripts/*_result.txt
