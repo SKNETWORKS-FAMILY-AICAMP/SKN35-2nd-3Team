@@ -32,3 +32,7 @@ dist/
 
 # Logs
 *.log
+
+# Data (raw/processed datasets are gitignored — too large / regenerable)
+data/
+scripts/*_result.txt
