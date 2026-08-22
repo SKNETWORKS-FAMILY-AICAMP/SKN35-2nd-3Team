@@ -14,6 +14,14 @@ _TM2LATLON = Transformer.from_crs("EPSG:5174", "EPSG:4326", always_xy=True)
 
 TARGET_CUTOFF = pd.Timestamp("2024-01-01")
 
+# 대한민국 대략적 경위도 범위 — 벗어나면 지오코딩 오류로 간주
+KOREA_LAT_RANGE = (33.0, 39.0)
+KOREA_LON_RANGE = (124.0, 132.0)
+
+# 이 연도 이전 개업일자는 실제 개업일이 아니라 "날짜 모름"을 나타내는
+# placeholder일 가능성이 높음(예: 1900-05-31로 동일하게 찍힌 사례들) — tenure 계산에서 제외
+PLACEHOLDER_YEAR_THRESHOLD = 1950
+
 RAW_COLUMNS = {
     "개업일자": "인허가일자",
     "폐업일자": "폐업일자",
@@ -65,6 +73,12 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     out["좌표Y"] = y
     out["경도"], out["위도"] = _transform_coords(x, y)
 
+    # 대한민국 범위를 벗어난 좌표는 지오코딩 오류로 보고 결측 처리
+    out_of_bounds = out["위도"].notna() & (
+        ~out["위도"].between(*KOREA_LAT_RANGE) | ~out["경도"].between(*KOREA_LON_RANGE)
+    )
+    out.loc[out_of_bounds, ["좌표X", "좌표Y", "경도", "위도"]] = float("nan")
+
     # 영업상태가 '폐업'인데 폐업일자가 없는 행은 타깃을 정할 수 없어 제외
     ambiguous = (out["영업상태"] == "폐업") & out["폐업일자"].isna()
     out = out.loc[~ambiguous].copy()
@@ -78,6 +92,10 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     out["tenure_days"] = (end_date - out["개업일자"]).dt.days
     out["tenure_years"] = out["tenure_days"] / 365.25
     out["개업연도"] = out["개업일자"].dt.year
+
+    # placeholder로 의심되는 개업일자는 원본 개업일자는 보존하되 tenure/개업연도만 결측 처리
+    placeholder_date = out["개업연도"] < PLACEHOLDER_YEAR_THRESHOLD
+    out.loc[placeholder_date, ["tenure_days", "tenure_years", "개업연도"]] = float("nan")
 
     out["y"] = (out["폐업일자"].notna() & (out["폐업일자"] >= TARGET_CUTOFF)).astype(int)
 

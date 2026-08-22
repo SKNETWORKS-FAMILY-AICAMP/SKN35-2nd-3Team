@@ -12,7 +12,7 @@ data/
 
 1. 팀 공유 드라이브 링크: (링크 채워 넣기)
 2. 필요한 파일을 받아 `data/raw/`에 그대로 저장 (파일명은 아래 "현재 보유 파일" 참고 — 원본은 한글명이라 영문으로 rename해서 둠)
-3. `scripts/run_all.py`로 인허가 6개 업종 전처리·통합, `scripts/run_retail_pilot.py`로 소매업 스냅샷 비교, `scripts/add_features.py`로 밀집도·대중교통 접근성 피처 추가 — 순서대로 실행하면 `data/processed/`에 결과 생성
+3. `scripts/run_all.py`로 인허가 6개 업종 전처리·통합, `scripts/run_retail_pilot.py`로 소매업 스냅샷 비교, `scripts/add_features.py`로 밀집도·대중교통 접근성 피처 추가 — 순서대로 실행하면 `data/processed/`에 결과 생성. 결측치/이상치 보정(지오코딩 오류 좌표, placeholder 개업일자 등)은 `load_and_clean()` 안에 포함돼 있어서 따로 실행할 스크립트 없음 — 자세한 내용은 `PROJECT_BRIEF.md` 10장 참고
 
 ## 현재 보유 파일
 
