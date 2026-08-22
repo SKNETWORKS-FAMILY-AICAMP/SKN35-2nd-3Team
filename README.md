@@ -1,4 +1,4 @@
-# SKN35-2nd-3team
+# SKN35-2nd-3Team
 
 ## 개발 환경
 
