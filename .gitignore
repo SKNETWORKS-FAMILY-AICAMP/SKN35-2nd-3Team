@@ -37,6 +37,7 @@ dist/
 # keep folder structure + README tracked, ignore actual data files
 data/*
 !data/README.md
+!data/DATA_GUIDE.md
 !data/raw/
 !data/processed/
 data/raw/*
