@@ -1,0 +1,158 @@
+digraph ERD {
+  graph [rankdir=LR, fontname="Helvetica", bgcolor="white", splines=ortho, nodesep=0.6, ranksep=1.0];
+  node [shape=plaintext, fontname="Helvetica"];
+  edge [fontname="Helvetica", fontsize=10, color="#666666"];
+
+  USERS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FBEAF0">
+      <TR><TD BGCOLOR="#ED93B1"><B>users</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK user_id</TD></TR>
+      <TR><TD ALIGN="LEFT">user_type</TD></TR>
+      <TR><TD ALIGN="LEFT">FK store_id (owner only)</TD></TR>
+      <TR><TD ALIGN="LEFT">login_id</TD></TR>
+      <TR><TD ALIGN="LEFT">password_hash</TD></TR>
+    </TABLE>>];
+
+  STORES [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E6F1FB">
+      <TR><TD BGCOLOR="#85B7EB"><B>stores</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK store_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK current_industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">FK dong_code</TD></TR>
+      <TR><TD ALIGN="LEFT">first_seen_snapshot</TD></TR>
+      <TR><TD ALIGN="LEFT">last_seen_snapshot</TD></TR>
+      <TR><TD ALIGN="LEFT">n_snapshots_observed</TD></TR>
+      <TR><TD ALIGN="LEFT">is_closed</TD></TR>
+      <TR><TD ALIGN="LEFT">had_temporary_gap</TD></TR>
+    </TABLE>>];
+
+  STORE_SNAPSHOTS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E6F1FB">
+      <TR><TD BGCOLOR="#85B7EB"><B>store_snapshots</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK snapshot_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK store_id</TD></TR>
+      <TR><TD ALIGN="LEFT">snapshot_date</TD></TR>
+      <TR><TD ALIGN="LEFT">FK industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">store_name</TD></TR>
+      <TR><TD ALIGN="LEFT">lng, lat</TD></TR>
+      <TR><TD ALIGN="LEFT">is_closed_next</TD></TR>
+      <TR><TD ALIGN="LEFT">transitioned_next</TD></TR>
+      <TR><TD ALIGN="LEFT">label_available</TD></TR>
+    </TABLE>>];
+
+  INDUSTRIES [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E6F1FB">
+      <TR><TD BGCOLOR="#85B7EB"><B>industries</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">industry_name</TD></TR>
+      <TR><TD ALIGN="LEFT">industry_jung_code</TD></TR>
+      <TR><TD ALIGN="LEFT">industry_jung_name</TD></TR>
+      <TR><TD ALIGN="LEFT">industry_dae_code</TD></TR>
+      <TR><TD ALIGN="LEFT">custom_group</TD></TR>
+    </TABLE>>];
+
+  ADMINISTRATIVE_DONGS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E6F1FB">
+      <TR><TD BGCOLOR="#85B7EB"><B>administrative_dongs</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK dong_code</TD></TR>
+      <TR><TD ALIGN="LEFT">dong_name</TD></TR>
+      <TR><TD ALIGN="LEFT">gu_name</TD></TR>
+    </TABLE>>];
+
+  POPULATION_FEATURES [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E1F5EE">
+      <TR><TD BGCOLOR="#5DCAA5"><B>population_features</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK/FK dong_code</TD></TR>
+      <TR><TD ALIGN="LEFT">korean_pop</TD></TR>
+      <TR><TD ALIGN="LEFT">foreign_long_pop</TD></TR>
+      <TR><TD ALIGN="LEFT">foreign_short_pop</TD></TR>
+      <TR><TD ALIGN="LEFT">total_pop_avg</TD></TR>
+      <TR><TD ALIGN="LEFT">foreign_short_ratio</TD></TR>
+      <TR><TD ALIGN="LEFT">tourist_zone_candidate</TD></TR>
+    </TABLE>>];
+
+  SPATIAL_DENSITY_FEATURES [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E1F5EE">
+      <TR><TD BGCOLOR="#5DCAA5"><B>spatial_density_features</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK/FK store_id</TD></TR>
+      <TR><TD ALIGN="LEFT">PK snapshot_date</TD></TR>
+      <TR><TD ALIGN="LEFT">same_industry_count_300m</TD></TR>
+      <TR><TD ALIGN="LEFT">total_count_300m</TD></TR>
+      <TR><TD ALIGN="LEFT">nearest_same_industry_distance_m</TD></TR>
+      <TR><TD ALIGN="LEFT">dong_industry_count</TD></TR>
+    </TABLE>>];
+
+  TREND_KEYWORDS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E1F5EE">
+      <TR><TD BGCOLOR="#5DCAA5"><B>trend_keywords</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK keyword</TD></TR>
+      <TR><TD ALIGN="LEFT">PK snapshot_date</TD></TR>
+      <TR><TD ALIGN="LEFT">store_count</TD></TR>
+      <TR><TD ALIGN="LEFT">growth_rate</TD></TR>
+    </TABLE>>];
+
+  INDUSTRY_TRANSITIONS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E1F5EE">
+      <TR><TD BGCOLOR="#5DCAA5"><B>industry_transitions</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK transition_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK store_id</TD></TR>
+      <TR><TD ALIGN="LEFT">from_snapshot, to_snapshot</TD></TR>
+      <TR><TD ALIGN="LEFT">FK from_industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">FK to_industry_code</TD></TR>
+    </TABLE>>];
+
+  INDUSTRY_SURVIVAL_STATS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#E1F5EE">
+      <TR><TD BGCOLOR="#5DCAA5"><B>industry_survival_stats</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK/FK from_industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">PK/FK to_industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">sample_size</TD></TR>
+      <TR><TD ALIGN="LEFT">survival_rate</TD></TR>
+    </TABLE>>];
+
+  MODELS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FAECE7">
+      <TR><TD BGCOLOR="#F0997B"><B>models</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK model_id</TD></TR>
+      <TR><TD ALIGN="LEFT">model_name, version</TD></TR>
+      <TR><TD ALIGN="LEFT">accuracy, precision, recall, f1, roc_auc</TD></TR>
+      <TR><TD ALIGN="LEFT">is_production</TD></TR>
+    </TABLE>>];
+
+  PREDICTIONS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FAECE7">
+      <TR><TD BGCOLOR="#F0997B"><B>predictions</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK prediction_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK model_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK user_id (nullable)</TD></TR>
+      <TR><TD ALIGN="LEFT">query_type</TD></TR>
+      <TR><TD ALIGN="LEFT">FK store_id (nullable)</TD></TR>
+      <TR><TD ALIGN="LEFT">FK industry_code</TD></TR>
+      <TR><TD ALIGN="LEFT">score</TD></TR>
+    </TABLE>>];
+
+  SUPPORT_ACTIONS [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" BGCOLOR="#FAECE7">
+      <TR><TD BGCOLOR="#F0997B"><B>support_actions</B></TD></TR>
+      <TR><TD ALIGN="LEFT">PK action_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK store_id</TD></TR>
+      <TR><TD ALIGN="LEFT">FK admin_user_id</TD></TR>
+      <TR><TD ALIGN="LEFT">action_type, action_date</TD></TR>
+    </TABLE>>];
+
+  USERS -> STORES [label="1:1 (owner)"];
+  USERS -> PREDICTIONS [label="1:N"];
+  USERS -> SUPPORT_ACTIONS [label="1:N (admin)"];
+  STORES -> STORE_SNAPSHOTS [label="1:N"];
+  STORES -> SPATIAL_DENSITY_FEATURES [label="1:N"];
+  STORES -> INDUSTRY_TRANSITIONS [label="1:N"];
+  STORES -> PREDICTIONS [label="1:N"];
+  STORES -> SUPPORT_ACTIONS [label="1:N"];
+  STORES -> ADMINISTRATIVE_DONGS [label="N:1"];
+  INDUSTRIES -> STORE_SNAPSHOTS [label="1:N"];
+  INDUSTRIES -> INDUSTRY_TRANSITIONS [label="1:N (from/to)"];
+  INDUSTRIES -> INDUSTRY_SURVIVAL_STATS [label="1:N (from/to)"];
+  INDUSTRIES -> PREDICTIONS [label="1:N"];
+  ADMINISTRATIVE_DONGS -> POPULATION_FEATURES [label="1:N"];
+  MODELS -> PREDICTIONS [label="1:N"];
+}

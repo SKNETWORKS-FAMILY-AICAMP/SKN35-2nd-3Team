@@ -1,0 +1,10 @@
+# 앱(Streamlit) 실행 전용 의존성
+# 데이터 전처리/모델 학습 의존성은 최상위 requirements.txt 참고
+
+streamlit
+pandas
+plotly
+shap
+joblib
+folium
+streamlit-folium
