@@ -53,14 +53,16 @@ CREATE TABLE store_snapshots (
     store_id             VARCHAR(30)     NOT NULL,
     snapshot_date        VARCHAR(6)      NOT NULL,   -- 202312~202606
     industry_code        VARCHAR(20)     NOT NULL,
-    store_name            VARCHAR(200)    NOT NULL,
-    lng                    DECIMAL(10, 7)  NOT NULL,
-    lat                    DECIMAL(10, 7)  NOT NULL,
-    is_closed_next         BOOLEAN         NOT NULL,   -- 다음 스냅샷에서 사라졌는지
-    transitioned_next      BOOLEAN         NOT NULL,   -- 다음 스냅샷으로 갈 때 업종이 바뀌었는지
-    label_available         BOOLEAN         NOT NULL,   -- 마지막 스냅샷(202606)만 FALSE, 서빙 전용
+    dong_code             VARCHAR(20)     NOT NULL,
+    store_name             VARCHAR(200)    NOT NULL,
+    lng                     DECIMAL(10, 7)  NOT NULL,
+    lat                     DECIMAL(10, 7)  NOT NULL,
+    is_closed_next          BOOLEAN         NOT NULL,   -- 다음 스냅샷에서 사라졌는지
+    transitioned_next       BOOLEAN         NOT NULL,   -- 다음 스냅샷으로 갈 때 업종이 바뀌었는지
+    label_available          BOOLEAN         NOT NULL,   -- 마지막 스냅샷(202606)만 FALSE, 서빙 전용
     PRIMARY KEY (snapshot_id),
     UNIQUE KEY uq_store_snapshot (store_id, snapshot_date),
+    FOREIGN KEY (dong_code) REFERENCES administrative_dongs(dong_code),
     FOREIGN KEY (store_id) REFERENCES stores(store_id),
     FOREIGN KEY (industry_code) REFERENCES industries(industry_code)
 );
