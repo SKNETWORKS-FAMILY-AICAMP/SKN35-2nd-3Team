@@ -54,6 +54,8 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
 
     반환 컬럼: 업종명, 사업장명, 개업일자, 폐업일자, 영업상태, 소재지주소,
     좌표X, 좌표Y, 위도, 경도, tenure_days, tenure_years, 개업연도, y
+
+    2024년 이전에 폐업한 행은 결과에서 제외된다(y=0은 "현재 영업 중"만을 의미).
     """
     usecols = list(RAW_COLUMNS.values())
     df = pd.read_csv(file_path, encoding=encoding, usecols=usecols, dtype=str)
@@ -98,5 +100,12 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     out.loc[placeholder_date, ["tenure_days", "tenure_years", "개업연도"]] = float("nan")
 
     out["y"] = (out["폐업일자"].notna() & (out["폐업일자"] >= TARGET_CUTOFF)).astype(int)
+
+    # 2024년 이전에 이미 폐업한 행은 제외한다. 업종밀집도/대중교통 접근성 같은
+    # 피처는 "오늘" 기준으로 계산되는데, 오래전에 폐업한 가게에 현재 시점 피처를
+    # 붙이면 실제 폐업 당시 환경과 무관한 값을 학습시키게 된다. y=0은
+    # "현재 영업 중"만을 의미하도록 유지한다.
+    stale_closure = out["폐업일자"].notna() & (out["폐업일자"] < TARGET_CUTOFF)
+    out = out.loc[~stale_closure].copy()
 
     return out.reset_index(drop=True)
