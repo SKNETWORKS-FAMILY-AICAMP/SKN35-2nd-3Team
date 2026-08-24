@@ -22,6 +22,11 @@ KOREA_LON_RANGE = (124.0, 132.0)
 # placeholder일 가능성이 높음(예: 1900-05-31로 동일하게 찍힌 사례들) — tenure 계산에서 제외
 PLACEHOLDER_YEAR_THRESHOLD = 1950
 
+# 영업상태명이 이 값이면서 폐업일자가 없으면 사실상 폐업으로 보되, 정확한 날짜를
+# 몰라 2024년 기준 판단이 불가능해 제외한다(PC방의 인허가 취소/말소/만료/정지/중지
+# 등). '휴업'은 리모델링 등 일시 중단일 수 있어 제외 대상에서 뺀다.
+CLOSURE_LIKE_STATUSES = {"폐업", "취소/말소/만료/정지/중지", "제외/삭제/전출"}
+
 RAW_COLUMNS = {
     "개업일자": "인허가일자",
     "폐업일자": "폐업일자",
@@ -53,9 +58,10 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     """원본 인허가 CSV를 읽어 공통 표준 스키마로 정리한 DataFrame을 반환한다.
 
     반환 컬럼: 업종명, 사업장명, 개업일자, 폐업일자, 영업상태, 소재지주소,
-    좌표X, 좌표Y, 위도, 경도, tenure_days, tenure_years, 개업연도, y
+    경도, 위도, tenure_years, 개업연도, y
 
-    2024년 이전에 폐업한 행은 결과에서 제외된다(y=0은 "현재 영업 중"만을 의미).
+    2024년 이전에 폐업한 행, 그리고 폐업(류) 상태인데 폐업일자를 몰라 판단이
+    불가능한 행은 결과에서 제외된다(y=0은 "현재 영업 중"만을 의미).
     """
     usecols = list(RAW_COLUMNS.values())
     df = pd.read_csv(file_path, encoding=encoding, usecols=usecols, dtype=str)
@@ -81,8 +87,8 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     )
     out.loc[out_of_bounds, ["좌표X", "좌표Y", "경도", "위도"]] = float("nan")
 
-    # 영업상태가 '폐업'인데 폐업일자가 없는 행은 타깃을 정할 수 없어 제외
-    ambiguous = (out["영업상태"] == "폐업") & out["폐업일자"].isna()
+    # 영업상태가 폐업(류)인데 폐업일자가 없는 행은 타깃을 정할 수 없어 제외
+    ambiguous = out["영업상태"].isin(CLOSURE_LIKE_STATUSES) & out["폐업일자"].isna()
     out = out.loc[~ambiguous].copy()
 
     # 논리 오류(개업일자 > 폐업일자) 행 제외
@@ -107,5 +113,9 @@ def load_and_clean(file_path: str, 업종명: str, *, encoding: str = "cp949") -
     # "현재 영업 중"만을 의미하도록 유지한다.
     stale_closure = out["폐업일자"].notna() & (out["폐업일자"] < TARGET_CUTOFF)
     out = out.loc[~stale_closure].copy()
+
+    # 좌표X/Y(원본 TM좌표, 경도/위도로 변환 후엔 안 씀)와 tenure_days(tenure_years와
+    # 100% 중복, 스케일만 다름)는 최종 결과에서 제외한다.
+    out = out.drop(columns=["좌표X", "좌표Y", "tenure_days"])
 
     return out.reset_index(drop=True)
