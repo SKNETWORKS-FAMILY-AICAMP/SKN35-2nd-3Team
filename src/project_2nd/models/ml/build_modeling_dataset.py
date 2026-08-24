@@ -1,5 +1,5 @@
 """
-models/ml/01_build_modeling_dataset.py
+models/ml/build_modeling_dataset.py
 
 지금까지 만든 모든 피처를 합쳐서 학습용 최종 데이터셋을 조립한다.
   - store_snapshots (라벨 available=True만)

@@ -172,6 +172,7 @@ CREATE TABLE predictions (
     query_lng                          DECIMAL(10, 7)  NULL,
     industry_code                        VARCHAR(20)     NOT NULL,
     score                                   DECIMAL(6, 5)   NOT NULL,
+    shap_top_features                         JSON            NULL,   -- SHAP 상위 기여 피처 (예: [{"feature":"store_age_months","shap_value":-0.12,"feature_value":6}, ...])
     created_at                                DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_id),
     FOREIGN KEY (model_id) REFERENCES models(model_id),
@@ -181,6 +182,9 @@ CREATE TABLE predictions (
     -- 애플리케이션 레벨 검증 필요: query_type='existing_store'면 store_id NOT NULL,
     -- query_type='new_location'이면 query_lat/query_lng NOT NULL이 되도록 보장할 것.
 );
+-- 참고: shap_top_features는 SHAP 값을 매 요청마다 실시간 재계산하는 비용이 크므로
+-- (특히 MLP에 쓰는 KernelExplainer), 한 번 계산한 결과를 이 컬럼에 캐싱해두고
+-- 같은 조건(store_id + model_id)의 재조회 시 재사용하는 것을 권장한다.
 
 CREATE TABLE support_actions (
     action_id                BIGINT          NOT NULL AUTO_INCREMENT,
