@@ -2,49 +2,52 @@
 
 원본 파일은 건드리지 않는다 (팀원 파이프라인 코드/산출물 미변경).
 
-v2: industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 전 fold
-일관되게 하락(-0.002)해서 되돌림 — industry_historical_rate와의 상관관계는
-업종별 "평균" 기준이라 높았지만(0.9999), 트리 모델이 industry_code를 다른
-피처와 조합해 만드는 세밀한 분기 정보까지는 대체하지 못했던 것으로 보임.
+v4 (2026-08-26): 팀원분이 파이프라인에 floor_category(층정보, ROC-AUC 0.721→0.728로
+검증된 유일한 효과 있는 피처)와 coord_cluster_size(DBSCAN 기반, 저희가 만들었던
+exact-match 버전보다 정교함 — 스냅샷 간 좌표 미세 오차까지 하나의 건물/복합상가로
+묶어줌)를 공식 반영해서 새 modeling_dataset.csv(33컬럼)를 내려받음.
+저희 쪽 coord_cluster_size는 이제 완전히 대체됐으므로 제거하고, 팀원분 버전을 그대로 사용.
+`run_pipeline.sh`로 로컬에서 직접 재생성한 파일 기준(SRC 경로가 로컬 data/features/로 변경됨).
 
-적용 내역:
+v3까지의 이력 (구 modeling_dataset.csv, 31컬럼 기준):
+- industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 전 fold 일관되게
+  하락(-0.002)해서 되돌림 — industry_historical_rate와의 상관관계는 업종별 "평균"
+  기준이라 높았지만(0.9999), 트리 모델이 industry_code를 다른 피처와 조합해 만드는
+  세밀한 분기 정보까지는 대체하지 못했던 것으로 보임.
+- dong_code 제거 — dong_historical_rate와 그룹평균 상관 0.87로 완전 중복은 아니었지만,
+  5-fold ablation에서 있음/없음 성능이 사실상 동일해서 제거. (v4에서는 스코프/컬럼이
+  바뀌었으니 재검증 필요 — compare_dongcode_ablation_pjw.py로 다시 확인할 것)
+- coord_cluster_size 자체 구현 시 시점 누수(전체 스냅샷 합산) 발견 후 snapshot_date
+  기준으로 수정한 이력 있음 — v4에서는 팀원분 버전(스냅샷별 DBSCAN)을 쓰므로 해당 없음.
+
+v4 적용 내역:
 0. transitioned_next 제거 — is_closed_next(타깃)와 같은 "다음 스냅샷" 시점 정보라
    타깃 누수 의심(둘은 상호배타적으로 나옴, 즉 transitioned_next=1이면 is_closed_next=0이
    자동 확정됨). preprocess_report_pjw.md 참고
 1. total_pop_avg 제거 (korean_pop+foreign_long_pop+foreign_short_pop의 단순 합, 순수 중복)
 2. is_mass_reclass_window 플래그 추가 (snapshot_date==202406, 소진공 대규모 재정비 구간 추정)
-3. 생활인구 결측(1.6%)을 같은 gu_name 평균/최빈값으로 대체
+2.5. gu_name 결측 30,181행(12개 dong_code, population_features.csv와 매칭 실패 — 팀원분
+   문서의 "9개 동 매칭 실패"와 같은 종류 이슈, 새 파이프라인에서 12개로 늘어남) 복구.
+   dong_code 앞 5자리(구 코드)가 같은 다른 행의 gu_name으로 매핑해보니 12개 전부 모호함
+   없이 gu_name 하나로 정확히 복원됨(강북구 6/강동구 2/동대문구 2/구로구 1/강남구 1).
+   이 매핑을 활용해 gu_name을 먼저 채운 뒤, 아래 3번 인구 결측 대체도 정상 작동하게 함
+3. 생활인구 결측을 같은 gu_name 평균/최빈값으로 대체 (2.5번으로 gu_name 복구된 뒤에 수행)
 4. population_imputed 플래그 추가
-5. (v3) 파생 피처 3종 추가 — 전부 기존 컬럼 조합만 사용, 새 원본 데이터 불필요
+5. 파생 피처 3종 추가 — 전부 기존 컬럼 조합만 사용, 새 원본 데이터 불필요
    - industry_specialization_300m: same_industry_count_300m / total_count_300m (업종 특화도).
      total_count_300m==0이면 정의 불가라 NaN
    - competition_per_capita_300m: same_industry_count_300m / (korean_pop+foreign_long_pop+foreign_short_pop).
      인구 0이면 NaN
    - dong_industry_count_growth: (dong_code, industry_code) 그룹 내에서 snapshot_date 순으로
      dong_industry_count의 전기 대비 증감률. 그룹의 첫 스냅샷은 이전 값이 없어 NaN
-6. coord_cluster_size 컬럼 추가 — 서울 범위 밖 좌표는 없었지만, 정확히 같은 (lng, lat)을
-   공유하는 서로 다른 store_id가 최대 883개까지 나옴(전체 행의 83.5%가 2개 이상과 좌표
-   공유, 5.9%는 100개 이상과 공유). 대형 상가건물 때문일 수도 있고 지오코딩이 행정동
-   중심좌표로 fallback된 것일 수도 있어 원인 확정은 못 하지만, 이런 좌표에서는
-   same_industry_count_300m/nearest_same_industry_distance_m 같은 공간 피처의 신뢰도가
-   떨어질 수 있음. 좌표 자체는 못 고치니 "이 좌표를 공유하는 유니크 store_id 수"를
-   그대로 남겨서 후속 분석/모델링에서 참고하도록 함.
-   ⚠️ 반드시 snapshot_date 기준으로 그룹을 나눠서 계산할 것 — 전체 기간을 합쳐서 계산하면
-   미래 스냅샷에만 존재하는 매장까지 카운트에 섞여 과거 시점 행에 미래 정보가 새어들어감
-   (실제로 전체기간 합산 vs 스냅샷별 계산 시 41.9%의 행에서 값이 달라짐을 확인, 최초
-   구현에서 이 실수를 했다가 수정함)
-7. dong_code 제거 — dong_historical_rate와 그룹평균 상관 0.87로 완전 중복은 아니었지만,
-   5-fold ablation에서 있음/없음 성능이 사실상 동일(ROC-AUC 0.748361 vs 0.748395,
-   F1은 오히려 without이 근소 우세)해서 제거. dong_historical_rate/
-   dong_industry_historical_rate/gu_name/coord_cluster_size가 지역 정보를 충분히 대체함
 """
 
 from pathlib import Path
 
 import pandas as pd
 
-SRC = r"C:\Users\playdata2\Desktop\플젝 공유\files-20260825T001524Z-1-001\files\modeling_dataset.csv"
 REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC = REPO_ROOT / "data" / "features" / "modeling_dataset.csv"
 OUT = REPO_ROOT / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -54,6 +57,16 @@ POP_COLS = ["korean_pop", "foreign_long_pop", "foreign_short_pop", "foreign_shor
 df = pd.read_csv(SRC)
 
 df["is_mass_reclass_window"] = (df["snapshot_date"] == 202406).astype(int)
+
+# gu_name 결측 복구: dong_code 앞 5자리(구 코드)가 같은 다른 행의 gu_name으로 매핑
+prefix5 = df["dong_code"].astype(str).str[:5]
+prefix_to_gu = (
+    df.loc[df["gu_name"].notna()]
+    .assign(prefix5=lambda d: d["dong_code"].astype(str).str[:5])
+    .drop_duplicates("prefix5")
+    .set_index("prefix5")["gu_name"]
+)
+df["gu_name"] = df["gu_name"].fillna(prefix5.map(prefix_to_gu))
 
 pop_missing = df["korean_pop"].isna()
 df["population_imputed"] = pop_missing.astype(int)
@@ -65,7 +78,7 @@ for col in POP_COLS:
 gu_mode = df.groupby("gu_name")["tourist_zone_candidate"].transform(lambda s: s.mode().iloc[0] if s.notna().any() else 0)
 df["tourist_zone_candidate"] = df["tourist_zone_candidate"].fillna(gu_mode)
 
-# --- v3: 파생 피처 3종 ---
+# --- 파생 피처 3종 ---
 df["industry_specialization_300m"] = (
     df["same_industry_count_300m"] / df["total_count_300m"].replace(0, pd.NA)
 )
@@ -81,8 +94,6 @@ prev = grp.shift(1)
 df["dong_industry_count_growth"] = (df["dong_industry_count"] - prev) / prev.replace(0, pd.NA)
 df = df.sort_index()
 
-df["coord_cluster_size"] = df.groupby(["snapshot_date", "lng", "lat"])["store_id"].transform("nunique")
-
 df = df.drop(columns=DROP_COLS)
 
 df.to_csv(OUT, index=False)
@@ -93,5 +104,4 @@ print(f"population_imputed=1: {df['population_imputed'].sum()}")
 print(f"is_mass_reclass_window=1: {df['is_mass_reclass_window'].sum()}")
 for c in ["industry_specialization_300m", "competition_per_capita_300m", "dong_industry_count_growth"]:
     print(f"{c} 결측: {df[c].isna().sum()} ({df[c].isna().mean():.2%})")
-print(f"coord_cluster_size >= 20인 행: {(df['coord_cluster_size'] >= 20).sum()} ({(df['coord_cluster_size'] >= 20).mean():.2%})")
 print(f"기존 컬럼 중 남은 결측치:\n{df.drop(columns=['industry_specialization_300m', 'competition_per_capita_300m', 'dong_industry_count_growth']).isna().sum().pipe(lambda s: s[s > 0])}")

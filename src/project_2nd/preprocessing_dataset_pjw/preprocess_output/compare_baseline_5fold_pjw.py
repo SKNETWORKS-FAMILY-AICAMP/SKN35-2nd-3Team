@@ -9,8 +9,9 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
-ORIGINAL = r"C:\Users\playdata2\Desktop\플젝 공유\files-20260825T001524Z-1-001\files\modeling_dataset.csv"
-REFINED = Path(__file__).resolve().parents[4] / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+ORIGINAL = REPO_ROOT / "data" / "features" / "modeling_dataset.csv"
+REFINED = REPO_ROOT / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 
 NON_FEATURE = {"store_id", "fold", "is_closed_next"}
 

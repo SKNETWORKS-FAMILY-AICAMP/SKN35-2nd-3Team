@@ -1,73 +1,73 @@
 === original: fold별 성능 ===
       accuracy  precision    recall        f1   roc_auc
 fold                                                   
-0     0.905563   0.770585  0.159298  0.264018  0.745881
-1     0.905560   0.759948  0.160480  0.265000  0.745857
-2     0.905131   0.764371  0.158694  0.262823  0.745378
-3     0.904540   0.765591  0.159043  0.263373  0.744000
-4     0.905281   0.761731  0.156587  0.259774  0.744296
+0     0.906525   0.770036  0.172407  0.281735  0.748792
+1     0.906317   0.756071  0.172613  0.281059  0.748323
+2     0.906038   0.761246  0.172330  0.281038  0.748467
+3     0.905509   0.764170  0.172669  0.281688  0.746904
+4     0.906469   0.766420  0.170882  0.279456  0.746992
 
 === original: 평균 ± 표준편차 ===
-accuracy     0.9052 ± 0.0004
-precision    0.7644 ± 0.0041
-recall       0.1588 ± 0.0014
-f1             0.263 ± 0.002
-roc_auc      0.7451 ± 0.0009
+accuracy     0.9062 ± 0.0004
+precision    0.7636 ± 0.0053
+recall       0.1722 ± 0.0007
+f1            0.281 ± 0.0009
+roc_auc      0.7479 ± 0.0009
 
 === original: fold 평균 feature importance top 15 ===
-industry_code                       1124.6
-store_age_months                     269.0
-snapshot_date                        255.6
-gu_name                              220.8
-dong_industry_historical_rate        163.8
-total_count_300m                     139.0
-same_industry_count_300m             111.6
-nearest_same_industry_distance_m     108.2
-dong_industry_count                   73.2
-previously_transitioned               67.6
-dong_historical_rate                  66.8
-transitioned_next                     55.0
-lat                                   50.4
-industry_jung_code                    49.4
-lng                                   38.8
+industry_code                       1189.2
+store_age_months                     270.6
+snapshot_date                        253.2
+gu_name                              187.2
+dong_industry_historical_rate        137.4
+floor_category                       106.6
+total_count_300m                      99.0
+coord_cluster_size                    96.8
+nearest_same_industry_distance_m      92.2
+same_industry_count_300m              83.4
+dong_industry_count                   71.0
+previously_transitioned               57.6
+transitioned_next                     53.6
+dong_historical_rate                  51.6
+industry_jung_code                    48.4
 
 === refined: fold별 성능 ===
       accuracy  precision    recall        f1   roc_auc
 fold                                                   
-0     0.905634   0.768554  0.161043  0.266288  0.746662
-1     0.905599   0.762034  0.160182  0.264719  0.745878
-2     0.905407   0.767964  0.161012  0.266210  0.746158
-3     0.904673   0.763664  0.161599  0.266751  0.744536
-4     0.905456   0.764521  0.157887  0.261723  0.744925
+0     0.906593   0.768317  0.174052  0.283810  0.748343
+1     0.906338   0.756283  0.172812  0.281337  0.748061
+2     0.906119   0.769059  0.170135  0.278630  0.747884
+3     0.905655   0.764776  0.174381  0.284005  0.746763
+4     0.906496   0.768243  0.170482  0.279041  0.747000
 
 === refined: 평균 ± 표준편차 ===
-accuracy     0.9054 ± 0.0004
-precision    0.7653 ± 0.0028
-recall       0.1603 ± 0.0015
-f1           0.2651 ± 0.0021
-roc_auc      0.7456 ± 0.0009
+accuracy     0.9062 ± 0.0004
+precision    0.7653 ± 0.0053
+recall        0.1724 ± 0.002
+f1           0.2814 ± 0.0025
+roc_auc      0.7476 ± 0.0007
 
 === refined: fold 평균 feature importance top 15 ===
-industry_code                       1172.6
-store_age_months                     246.0
-snapshot_date                        230.0
-gu_name                              222.2
-coord_cluster_size                   137.2
-dong_industry_historical_rate        125.0
-total_count_300m                     104.4
-nearest_same_industry_distance_m      78.8
-previously_transitioned               72.4
-industry_specialization_300m          72.0
-dong_historical_rate                  60.8
-dong_industry_count                   51.2
-same_industry_count_300m              49.2
-dong_industry_count_growth            48.4
-industry_jung_code                    46.4
+industry_code                       1177.8
+store_age_months                     235.2
+snapshot_date                        223.2
+gu_name                              189.8
+dong_industry_historical_rate        125.2
+floor_category                       105.8
+total_count_300m                      95.8
+nearest_same_industry_distance_m      87.2
+coord_cluster_size                    86.4
+previously_transitioned               74.6
+industry_specialization_300m          67.4
+dong_historical_rate                  55.8
+dong_industry_count                   55.8
+same_industry_count_300m              52.4
+dong_industry_count_growth            49.6
 
 === 5-fold 평균 비교 요약 ===
            original   refined
-accuracy   0.905215  0.905354
-precision  0.764445  0.765347
-recall     0.158821  0.160345
-f1         0.262997  0.265138
-roc_auc    0.745082  0.745632
+accuracy   0.906171  0.906240
+precision  0.763588  0.765336
+recall     0.172180  0.172372
+f1         0.280995  0.281365
+roc_auc    0.747896  0.747610

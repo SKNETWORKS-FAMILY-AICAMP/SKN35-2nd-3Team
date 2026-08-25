@@ -1,8 +1,42 @@
-# modeling_dataset_refined.csv — 전처리 v2 작업 기록
+# modeling_dataset_refined_pjw.csv — 전처리 작업 기록
 
-원본(`modeling_dataset.csv`, 팀원 공유분)은 건드리지 않고, 별도 스크립트(`preprocess_modeling_dataset_pjw.py`)로 정제본(`data/processed/modeling_dataset_refined_pjw.csv`)을 생성한다. 팀원 파이프라인 코드(`db/`, `features/`, `models/`, `preprocessing_dataset/`)는 미변경.
+원본(`data/features/modeling_dataset.csv`)은 건드리지 않고, 별도 스크립트(`preprocess_modeling_dataset_pjw.py`)로 정제본(`data/processed/modeling_dataset_refined_pjw.csv`)을 생성한다. 팀원 파이프라인 코드(`db/`, `features/`, `models/`, `preprocessing_dataset/`)는 미변경.
 
-✅ **원본 파일 버전 확인 완료**: 공유받은 `modeling_dataset.csv`(1,889,582행)가 맞는 최신 버전임을 팀원분께 확인함. `modeling_설명.md` 문서에 적힌 2,591,877행 쪽이 오래된 수치.
+---
+
+## 🆕 v4 (2026-08-26): 팀원분 파이프라인 재실행 + `gu_name` 버그 발견/수정
+
+팀원분이 `floor_category`(층정보)와 `coord_cluster_size`(DBSCAN 기반, 저희 exact-match 버전보다 정교함)를 공식 파이프라인에 반영. 공유 zip엔 대용량 산출물(`modeling_dataset.csv`)이 안 들어있어서, **`run_pipeline.sh`로 직접 로컬 재실행**해서 새 원본을 만들었다(uv 환경, 8단계, 총 555초 소요, 무사 완주).
+
+**부수 확인**: 예전에 "파일-문서 버전 불일치"라고 여겼던 것(1,889,582행 vs 문서 2,591,877행)의 진짜 원인이 파이프라인 로그로 확인됨 — **버전 차이가 아니라 파이프라인 단계 차이**였음. `build_modeling_dataset.py`가 스코프 제외(과학·기술/부동산/시설관리·임대) 적용 전엔 2,591,877행, 적용 후 1,889,582행. 문서는 필터링 전 숫자를 적어놓은 것.
+
+### 🐛 새로 발견한 버그: `gu_name` 결측 30,181행
+
+기존 `data/features/modeling_dataset.csv`를 감사하다가, `gu_name`(및 그로 인해 연쇄적으로 `korean_pop` 등 생활인구 5개 컬럼)이 **12개 `dong_code`에서 결측**인 걸 발견. `population_features.csv`(행정동 424개)에 이 12개 동이 아예 없어서(팀원분 문서의 "9개 동 매칭 실패"와 같은 종류 이슈, 새 파이프라인에서 12개로 확인됨) 조인 시 `gu_name`부터 비어버리는 구조였음 — 즉 원래 있던 "생활인구 결측 1.6%"의 근본 원인이 인구 데이터가 아니라 `gu_name` 자체였다는 걸 이번에 알게 됨.
+
+**수정**: 행정동코드 앞 5자리(구 코드)가 같은 다른 행의 `gu_name`으로 매핑해보니 12개 전부 모호함 없이 하나의 구로 정확히 복원됨(강북구 6 / 강동구 2 / 동대문구 2 / 구로구 1 / 강남구 1). 이 매핑으로 `gu_name`을 먼저 채운 뒤, 인구 결측 대체(구 평균)도 정상 작동하게 함 — 정제본 기준 남은 결측치 0건.
+
+### 최종 검증 (새 데이터, LightGBM 5-fold)
+
+| | 새 원본(33컬럼) | 저희 정제본(36컬럼, dong_code 제거) |
+|---|---|---|
+| ROC-AUC | 0.747896 ± 0.0009 | 0.747610 ± 0.0007 |
+| F1 | 0.280995 | 0.281365 |
+| Accuracy | 0.906171 | 0.906240 |
+
+통계적으로 동률(예상대로 — 팀원분이 이미 비슷한 파생피처 11종을 광범위하게 검증한 뒤라 저희 파생피처가 추가로 줄 게 많지 않았음). **이번 라운드의 진짜 성과는 성능이 아니라 `gu_name` 결측 버그를 잡아서 30,181행의 데이터 완전성을 실제로 개선한 것.**
+
+`dong_code` ablation도 새 데이터로 재확인(있음 0.747755 vs 없음 0.747610, 동률) — 기존 결론(제거해도 무방) 그대로 유지.
+
+**v4에서 저희 `coord_cluster_size` 자체 구현은 제거**했음(팀원분의 DBSCAN 버전으로 완전 대체됨, 아래 v2/v3 이력은 참고용으로만 남겨둠).
+
+---
+
+## v2/v3 이력 (구 `modeling_dataset.csv`, 31컬럼 — floor_category/공식 coord_cluster_size 반영 전) — 참고용
+
+아래 내용은 팀원분이 `floor_category`를 추가하고 `coord_cluster_size`를 공식화하기 전, 구버전 데이터 기준으로 작업했던 기록이다. 결론(어떤 컬럼을 왜 남기고 뺐는지, `coord_cluster_size` 누수를 어떻게 찾고 고쳤는지)은 v4에도 그대로 이어지므로 남겨둔다.
+
+✅ **원본 파일 버전 확인 완료**: 공유받은 `modeling_dataset.csv`(1,889,582행)가 맞는 최신 버전임을 팀원분께 확인함. `modeling_설명.md` 문서에 적힌 2,591,877행 쪽이 오래된 수치. (→ v4에서 진짜 원인 규명됨: 스코프 필터링 전/후 차이였음)
 
 ---
 
@@ -96,5 +130,6 @@ LightGBM 대비 훨씬 뚜렷한 개선. 트리와 달리 로지스틱회귀는 
 
 ## 추가로 검토하면 좋을 것 (미착수)
 
-- `dong_historical_rate` 계산 로직 불일치 원인 확인 (팀원 문의 필요)
-- (선택) `coord_cluster_size`를 대형상가 "규모 구간"(예: 소/중/대형)으로 나눠서 범주형으로도 실험해볼 수 있음 — 원인이 확정됐으니 시도해볼 만함
+- `dong_historical_rate` 계산 로직 불일치 원인 확인 (팀원 문의 필요) — v4(새 데이터)에서는 아직 재검증 안 함
+- `gu_name` 결측 12개 동 문제를 우리 쪽에서만 patch하지 말고, 근본적으로는 `population_features.csv`(팀원분 파이프라인)에 이 12개 동을 채워넣는 게 맞는 방향 — 팀원분과 공유해서 상류에서 고칠지 논의 필요
+- (선택) `coord_cluster_size`를 대형상가 "규모 구간"(예: 소/중/대형)으로 나눠서 범주형으로도 실험해볼 수 있음
