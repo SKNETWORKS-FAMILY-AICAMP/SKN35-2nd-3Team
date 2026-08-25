@@ -28,7 +28,11 @@ v2: industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 �
    중심좌표로 fallback된 것일 수도 있어 원인 확정은 못 하지만, 이런 좌표에서는
    same_industry_count_300m/nearest_same_industry_distance_m 같은 공간 피처의 신뢰도가
    떨어질 수 있음. 좌표 자체는 못 고치니 "이 좌표를 공유하는 유니크 store_id 수"를
-   그대로 남겨서 후속 분석/모델링에서 참고하도록 함
+   그대로 남겨서 후속 분석/모델링에서 참고하도록 함.
+   ⚠️ 반드시 snapshot_date 기준으로 그룹을 나눠서 계산할 것 — 전체 기간을 합쳐서 계산하면
+   미래 스냅샷에만 존재하는 매장까지 카운트에 섞여 과거 시점 행에 미래 정보가 새어들어감
+   (실제로 전체기간 합산 vs 스냅샷별 계산 시 41.9%의 행에서 값이 달라짐을 확인, 최초
+   구현에서 이 실수를 했다가 수정함)
 7. dong_code 제거 — dong_historical_rate와 그룹평균 상관 0.87로 완전 중복은 아니었지만,
    5-fold ablation에서 있음/없음 성능이 사실상 동일(ROC-AUC 0.748361 vs 0.748395,
    F1은 오히려 without이 근소 우세)해서 제거. dong_historical_rate/
@@ -77,7 +81,7 @@ prev = grp.shift(1)
 df["dong_industry_count_growth"] = (df["dong_industry_count"] - prev) / prev.replace(0, pd.NA)
 df = df.sort_index()
 
-df["coord_cluster_size"] = df.groupby(["lng", "lat"])["store_id"].transform("nunique")
+df["coord_cluster_size"] = df.groupby(["snapshot_date", "lng", "lat"])["store_id"].transform("nunique")
 
 df = df.drop(columns=DROP_COLS)
 
