@@ -12,8 +12,6 @@ models/ml/build_modeling_dataset.py
   - store_age_months (stores.csv의 first_seen_snapshot 기준)
   - previously_transitioned (industry_transitions.csv 기준)
   - keyword_growth_score (trend_keywords.csv의 growth_rate를 상호명 매칭에 반영)
-  - 스코프 제외: 과학·기술/부동산/시설관리·임대 (소비자 대면 업종과 폐업 패턴이 이질적이고
-    외부 매출 데이터 커버리지도 없어 최종 모델링 스코프에서 제외)
 
 입력: data/features/{store_snapshots, spatial_density_features, population_features,
       industries, stores, industry_transitions, trend_keywords}.csv
@@ -26,11 +24,6 @@ import hashlib
 FEATURES_DIR = 'data/features'
 ORDER = ['202312', '202406', '202412', '202506', '202512', '202606']
 snap_idx = {s: i for i, s in enumerate(ORDER)}
-
-# 소비자 대면 업종에 집중하기 위해 제외하는 업종군.
-# 이 세 그룹은 (1) 폐업률이 전체 평균의 절반 수준으로 다른 업종과 패턴이 이질적이고
-# (2) 서울시 상권분석 매출 데이터에 커버리지가 전혀/거의 없어 외부 검증도 불가능해서 제외했다.
-EXCLUDED_GROUPS = ['과학·기술', '부동산', '시설관리·임대']
 
 
 def fold_of(store_id, k=5):
@@ -109,16 +102,20 @@ df['dong_historical_rate'] = df['dong_historical_rate'].fillna(global_rate)
 df['dong_industry_historical_rate'] = df['dong_industry_historical_rate'].fillna(df['industry_historical_rate'])
 df = df.drop(columns=['dong_industry_key', 'label_available'])
 
-# 스코프 제외 (fold-safe 과거폐업률 계산 이후에 필터링 — 실제 검증(v6/v7)에서 쓴 순서와 동일하게 맞춤)
+# 스코프 확정: 과학·기술/부동산/시설관리·임대는 소비자 대면 업종과 폐업 패턴이 이질적이고
+# (폐업률이 전체 평균의 절반 수준) 서울시 매출 데이터에도 커버리지가 없어 제외한다.
+# 외부 경제지표 4종(매출/상권임대료/표준지공시지가/개별공시지가)은 각각 검증했으나
+# dong_code + dong_industry_historical_rate와 중복되어 성능 개선이 없어 최종안에서 제외했다.
+EXCLUDED_GROUPS = ['과학·기술', '부동산', '시설관리·임대']
 before = len(df)
 df = df[~df['industry_group'].isin(EXCLUDED_GROUPS)].reset_index(drop=True)
 print(f"스코프 제외: {before:,} -> {len(df):,} ({before - len(df):,}행 제거, {EXCLUDED_GROUPS})")
 
 final_cols = ['snapshot_date', 'store_id', 'industry_dae_code', 'industry_group',
               'industry_jung_code', 'industry_jung_name', 'industry_code', 'industry_name',
-              'gu_name', 'dong_code', 'lng', 'lat',
+              'gu_name', 'dong_code', 'lng', 'lat', 'floor_category',
               'same_industry_count_300m', 'total_count_300m', 'nearest_same_industry_distance_m',
-              'dong_industry_count', 'store_age_months', 'previously_transitioned',
+              'dong_industry_count', 'coord_cluster_size', 'store_age_months', 'previously_transitioned',
               'keyword_growth_score', 'korean_pop', 'foreign_long_pop', 'foreign_short_pop',
               'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate',
               'industry_historical_rate', 'dong_historical_rate', 'dong_industry_historical_rate',

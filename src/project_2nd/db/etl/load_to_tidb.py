@@ -16,11 +16,11 @@ import os
 import pandas as pd
 from sqlalchemy import text
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from app.shared.db import get_engine
 
 FEATURES_DIR = 'data/features'
-SCHEMA_PATH = 'src/project_2nd/db/schema.sql'
+SCHEMA_PATH = 'db/schema.sql'
 
 
 def create_tables(engine):
@@ -57,7 +57,7 @@ def load_stores(engine):
 def load_store_snapshots(engine):
     # snapshot_id는 AUTO_INCREMENT라 CSV에서 빼고 적재
     cols = ['store_id', 'snapshot_date', 'industry_code', 'dong_code', 'store_name',
-            'lng', 'lat', 'is_closed_next', 'transitioned_next', 'label_available']
+            'floor_category', 'lng', 'lat', 'is_closed_next', 'transitioned_next', 'label_available']
     for chunk in pd.read_csv(f'{FEATURES_DIR}/store_snapshots.csv', usecols=cols,
                               dtype={'store_id': str, 'dong_code': str, 'industry_code': str,
                                      'snapshot_date': str},
