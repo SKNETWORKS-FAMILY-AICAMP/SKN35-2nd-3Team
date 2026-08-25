@@ -29,6 +29,10 @@ v2: industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 �
    same_industry_count_300m/nearest_same_industry_distance_m 같은 공간 피처의 신뢰도가
    떨어질 수 있음. 좌표 자체는 못 고치니 "이 좌표를 공유하는 유니크 store_id 수"를
    그대로 남겨서 후속 분석/모델링에서 참고하도록 함
+7. dong_code 제거 — dong_historical_rate와 그룹평균 상관 0.87로 완전 중복은 아니었지만,
+   5-fold ablation에서 있음/없음 성능이 사실상 동일(ROC-AUC 0.748361 vs 0.748395,
+   F1은 오히려 without이 근소 우세)해서 제거. dong_historical_rate/
+   dong_industry_historical_rate/gu_name/coord_cluster_size가 지역 정보를 충분히 대체함
 """
 
 from pathlib import Path
@@ -39,7 +43,7 @@ SRC = r"C:\Users\playdata2\Desktop\플젝 공유\files-20260825T001524Z-1-001\fi
 OUT = Path(__file__).resolve().parents[1] / "data" / "processed" / "modeling_dataset_refined.csv"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
-DROP_COLS = ["total_pop_avg", "transitioned_next"]
+DROP_COLS = ["total_pop_avg", "transitioned_next", "dong_code"]
 POP_COLS = ["korean_pop", "foreign_long_pop", "foreign_short_pop", "foreign_short_ratio"]
 
 df = pd.read_csv(SRC)
