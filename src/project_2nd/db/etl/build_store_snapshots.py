@@ -10,6 +10,7 @@ store_snapshots(스냅샷 단위 이력)와 stores(매장 단위 마스터)를 �
 import pandas as pd
 import pickle
 import os
+import re
 
 RAW_DIR = 'data/raw'
 OUT_DIR = 'data/features'
@@ -29,8 +30,30 @@ NAME_COL = '상호명'
 SO_CODE = '상권업종소분류코드'
 DONG_CODE = '행정동코드'
 LNG_COL, LAT_COL = '경도', '위도'
+FLOOR_COL = '층정보'
 
-USE_COLS = [ID_COL, NAME_COL, SO_CODE, DONG_CODE, LNG_COL, LAT_COL]
+USE_COLS = [ID_COL, NAME_COL, SO_CODE, DONG_CODE, LNG_COL, LAT_COL, FLOOR_COL]
+
+
+def categorize_floor(x):
+    """
+    원본 층정보 문자열을 5개 카테고리로 단순화한다.
+    - '1' -> 1층
+    - 'B'로 시작 -> 지하
+    - 1~2자리 숫자(1 제외) -> 2층이상
+    - 그 외(4자리 이상 코드, '지' 등 애매한 값) -> 기타
+    - 결측 -> 결측 (실제 검증 결과 폐업률이 가장 높게 나온 카테고리라 별도 유지)
+    """
+    if pd.isna(x):
+        return '결측'
+    if x.startswith('B'):
+        return '지하'
+    if x == '1':
+        return '1층'
+    if re.fullmatch(r'\d{1,2}', x) and x != '1':
+        return '2층이상'
+    return '기타'
+
 
 with open(f'{OUT_DIR}/closed_ids_by_snap.pkl', 'rb') as f:
     closed_ids_by_snap = pickle.load(f)
@@ -42,6 +65,7 @@ for snap in ORDER:
     df = pd.read_csv(RAW_FILES[snap], usecols=USE_COLS, dtype=str)
     df[LNG_COL] = df[LNG_COL].astype(float)
     df[LAT_COL] = df[LAT_COL].astype(float)
+    df['floor_category'] = df[FLOOR_COL].apply(categorize_floor)
 
     closed_set = closed_ids_by_snap.get(snap, set())
     trans_map = transition_by_snap.get(snap, {})
@@ -54,7 +78,7 @@ for snap in ORDER:
                               SO_CODE: 'industry_code', DONG_CODE: 'dong_code',
                               LNG_COL: 'lng', LAT_COL: 'lat'})
     cols = ['snapshot_date', 'store_id', 'store_name', 'industry_code', 'dong_code',
-            'lng', 'lat', 'is_closed_next', 'transitioned_next', 'label_available']
+            'lng', 'lat', 'floor_category', 'is_closed_next', 'transitioned_next', 'label_available']
     out[cols].to_csv(f'{OUT_DIR}/store_snapshots.csv', mode='w' if first_write else 'a',
                       header=first_write, index=False, encoding='utf-8-sig')
     first_write = False

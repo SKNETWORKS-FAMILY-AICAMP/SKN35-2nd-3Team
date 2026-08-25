@@ -34,6 +34,7 @@ digraph ERD {
       <TR><TD ALIGN="LEFT">snapshot_date</TD></TR>
       <TR><TD ALIGN="LEFT">FK industry_code</TD></TR>
       <TR><TD ALIGN="LEFT">store_name</TD></TR>
+      <TR><TD ALIGN="LEFT">floor_category</TD></TR>
       <TR><TD ALIGN="LEFT">lng, lat</TD></TR>
       <TR><TD ALIGN="LEFT">is_closed_next</TD></TR>
       <TR><TD ALIGN="LEFT">transitioned_next</TD></TR>
@@ -80,6 +81,7 @@ digraph ERD {
       <TR><TD ALIGN="LEFT">total_count_300m</TD></TR>
       <TR><TD ALIGN="LEFT">nearest_same_industry_distance_m</TD></TR>
       <TR><TD ALIGN="LEFT">dong_industry_count</TD></TR>
+      <TR><TD ALIGN="LEFT">coord_cluster_size</TD></TR>
     </TABLE>>];
 
   TREND_KEYWORDS [label=<

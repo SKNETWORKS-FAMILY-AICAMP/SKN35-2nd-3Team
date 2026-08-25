@@ -55,6 +55,7 @@ CREATE TABLE store_snapshots (
     industry_code        VARCHAR(20)     NOT NULL,
     dong_code             VARCHAR(20)     NOT NULL,
     store_name             VARCHAR(200)    NOT NULL,
+    floor_category           VARCHAR(10)     NOT NULL,   -- '1층'/'2층이상'/'지하'/'기타'/'결측' 5개 카테고리
     lng                     DECIMAL(10, 7)  NOT NULL,
     lat                     DECIMAL(10, 7)  NOT NULL,
     is_closed_next          BOOLEAN         NOT NULL,   -- 다음 스냅샷에서 사라졌는지
@@ -90,6 +91,7 @@ CREATE TABLE spatial_density_features (
     total_count_300m                       INT             NOT NULL,   -- 반경 300m 내 전체 업종 매장 수
     nearest_same_industry_distance_m        DECIMAL(10, 3)  NULL,       -- 동일업종이 자기뿐이면 NULL
     dong_industry_count                     INT             NOT NULL,   -- 행정동 전체 기준 동일업종 매장 수
+    coord_cluster_size                        INT             NOT NULL,   -- 반경 20m 이내 DBSCAN 클러스터(같은 건물/복합상가 추정) 내 매장 수
     PRIMARY KEY (store_id, snapshot_date),
     FOREIGN KEY (store_id) REFERENCES stores(store_id)
 );
