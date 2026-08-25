@@ -23,11 +23,15 @@
 
 `dong_industry_historical_rate`(0.168), `industry_historical_rate`(0.160), `store_age_months`(-0.116) 정도만 유의미. 나머지(인구, 밀집도, 거리)는 거의 0.
 
-## 🔑 좌표 클러스터 — 가장 중요한 발견
+## 🔑 좌표 클러스터 — 가장 중요한 발견 (원인 규명 완료)
 
 정확히 같은 (lng, lat)을 공유하는 서로 다른 store_id가 최대 883개. 전체 행의 83.5%가 2개 이상과 좌표 공유, 18.7%는 20개 이상, 5.9%는 100개 이상과 공유. 어떤 행정동은 전체 매장의 62.5%가 좌표 하나에 몰림.
 
-원인 미확정(대형 상가건물 vs 지오코딩 행정동 중심좌표 fallback)이지만, 이 클러스터 크기 자체가 `preprocess_output`의 `coord_cluster_size` 피처로 실제 성능을 유의미하게 올림(자세한 내용은 `preprocess_report_pjw.md`).
+원본 스냅샷 CSV의 주소로 최대 두 클러스터를 직접 조회해서 **실제 대형 복합상가**임을 확인함 — 지오코딩 오류(행정동 중심좌표 fallback) 가설은 기각:
+- 883개 클러스터(송파구): `충민로 66` — 현대시티몰(문정동)
+- 행정동 62.5% 집중 클러스터(135개, 송파구): `올림픽로 435` — 잠실 파크리오 아파트 상가
+
+이 클러스터 크기 자체가 `preprocess_output`의 `coord_cluster_size` 피처로 실제 성능을 소폭 유의미하게 올림(자세한 내용은 `preprocess_report_pjw.md`).
 
 ## fold-safe `*_historical_rate` 검증
 
