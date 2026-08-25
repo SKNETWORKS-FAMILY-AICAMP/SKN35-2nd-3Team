@@ -2,7 +2,7 @@
 
 원본(`modeling_dataset.csv`, 팀원 공유분)은 건드리지 않고, 별도 스크립트(`preprocess_modeling_dataset_pjw.py`)로 정제본(`data/processed/modeling_dataset_refined_pjw.csv`)을 생성한다. 팀원 파이프라인 코드(`db/`, `features/`, `models/`, `preprocessing_dataset/`)는 미변경.
 
-⚠️ **원본 파일 버전 주의**: 공유받은 `modeling_dataset.csv`가 실제로는 1,889,582행인데, `modeling_설명.md` 문서엔 2,591,877행이라고 적혀있음(약 27% 차이, 폐업 비율도 문서 9.2% vs 실제 10.6%). 파일-문서 버전이 안 맞는 것으로 보임 — 계속 작업하기 전에 팀원분께 최신 버전 확인 필요.
+✅ **원본 파일 버전 확인 완료**: 공유받은 `modeling_dataset.csv`(1,889,582행)가 맞는 최신 버전임을 팀원분께 확인함. `modeling_설명.md` 문서에 적힌 2,591,877행 쪽이 오래된 수치.
 
 ---
 

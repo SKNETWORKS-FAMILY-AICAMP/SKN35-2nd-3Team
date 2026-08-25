@@ -13,7 +13,7 @@ pd.set_option("display.width", 200)
 df = pd.read_csv(SRC)
 
 print(f"전체 행수: {len(df)}, 컬럼수: {len(df.columns)}")
-print(f"문서(modeling_설명.md) 기재 행수: 2,591,877 — 실제와 {2591877 - len(df)}행 차이, 버전 확인 필요\n")
+print(f"문서(modeling_설명.md) 기재 행수: 2,591,877 — 실제와 {2591877 - len(df)}행 차이 (팀원 확인 결과 실제 파일이 맞는 최신 버전)\n")
 
 print("=== 중복: (store_id, snapshot_date) ===")
 print(f"중복 행수: {df.duplicated(subset=['store_id', 'snapshot_date']).sum()}\n")
