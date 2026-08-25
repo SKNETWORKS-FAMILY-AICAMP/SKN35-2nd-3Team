@@ -22,6 +22,13 @@ v2: industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 �
      인구 0이면 NaN
    - dong_industry_count_growth: (dong_code, industry_code) 그룹 내에서 snapshot_date 순으로
      dong_industry_count의 전기 대비 증감률. 그룹의 첫 스냅샷은 이전 값이 없어 NaN
+6. coord_cluster_size 컬럼 추가 — 서울 범위 밖 좌표는 없었지만, 정확히 같은 (lng, lat)을
+   공유하는 서로 다른 store_id가 최대 883개까지 나옴(전체 행의 83.5%가 2개 이상과 좌표
+   공유, 5.9%는 100개 이상과 공유). 대형 상가건물 때문일 수도 있고 지오코딩이 행정동
+   중심좌표로 fallback된 것일 수도 있어 원인 확정은 못 하지만, 이런 좌표에서는
+   same_industry_count_300m/nearest_same_industry_distance_m 같은 공간 피처의 신뢰도가
+   떨어질 수 있음. 좌표 자체는 못 고치니 "이 좌표를 공유하는 유니크 store_id 수"를
+   그대로 남겨서 후속 분석/모델링에서 참고하도록 함
 """
 
 from pathlib import Path
@@ -65,6 +72,8 @@ prev = grp.shift(1)
 df["dong_industry_count_growth"] = (df["dong_industry_count"] - prev) / prev.replace(0, pd.NA)
 df = df.sort_index()
 
+df["coord_cluster_size"] = df.groupby(["lng", "lat"])["store_id"].transform("nunique")
+
 df = df.drop(columns=DROP_COLS)
 
 df.to_csv(OUT, index=False)
@@ -75,4 +84,5 @@ print(f"population_imputed=1: {df['population_imputed'].sum()}")
 print(f"is_mass_reclass_window=1: {df['is_mass_reclass_window'].sum()}")
 for c in ["industry_specialization_300m", "competition_per_capita_300m", "dong_industry_count_growth"]:
     print(f"{c} 결측: {df[c].isna().sum()} ({df[c].isna().mean():.2%})")
+print(f"coord_cluster_size >= 20인 행: {(df['coord_cluster_size'] >= 20).sum()} ({(df['coord_cluster_size'] >= 20).mean():.2%})")
 print(f"기존 컬럼 중 남은 결측치:\n{df.drop(columns=['industry_specialization_300m', 'competition_per_capita_300m', 'dong_industry_count_growth']).isna().sum().pipe(lambda s: s[s > 0])}")
