@@ -8,6 +8,9 @@ v2: industry_code류 제거를 시도했다가 5-fold 검증에서 ROC-AUC가 �
 피처와 조합해 만드는 세밀한 분기 정보까지는 대체하지 못했던 것으로 보임.
 
 적용 내역:
+0. transitioned_next 제거 — is_closed_next(타깃)와 같은 "다음 스냅샷" 시점 정보라
+   타깃 누수 의심(둘은 상호배타적으로 나옴, 즉 transitioned_next=1이면 is_closed_next=0이
+   자동 확정됨). docs/전처리_v2_설명.md 참고
 1. total_pop_avg 제거 (korean_pop+foreign_long_pop+foreign_short_pop의 단순 합, 순수 중복)
 2. is_mass_reclass_window 플래그 추가 (snapshot_date==202406, 소진공 대규모 재정비 구간 추정)
 3. 생활인구 결측(1.6%)을 같은 gu_name 평균/최빈값으로 대체
@@ -29,7 +32,7 @@ SRC = r"C:\Users\playdata2\Desktop\플젝 공유\files-20260825T001524Z-1-001\fi
 OUT = Path(__file__).resolve().parents[1] / "data" / "processed" / "modeling_dataset_refined.csv"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
-DROP_COLS = ["total_pop_avg"]
+DROP_COLS = ["total_pop_avg", "transitioned_next"]
 POP_COLS = ["korean_pop", "foreign_long_pop", "foreign_short_pop", "foreign_short_ratio"]
 
 df = pd.read_csv(SRC)
