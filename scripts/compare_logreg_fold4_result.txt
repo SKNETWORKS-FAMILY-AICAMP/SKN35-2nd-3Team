@@ -1,0 +1,6 @@
+           original   refined
+accuracy   0.680146  0.674098
+precision  0.184417  0.184882
+recall     0.588315  0.607382
+f1         0.280810  0.283477
+roc_auc    0.696740  0.700231

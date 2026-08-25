@@ -1,0 +1,73 @@
+=== original: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.905563   0.770585  0.159298  0.264018  0.745881
+1     0.905560   0.759948  0.160480  0.265000  0.745857
+2     0.905131   0.764371  0.158694  0.262823  0.745378
+3     0.904540   0.765591  0.159043  0.263373  0.744000
+4     0.905281   0.761731  0.156587  0.259774  0.744296
+
+=== original: 평균 ± 표준편차 ===
+accuracy     0.9052 ± 0.0004
+precision    0.7644 ± 0.0041
+recall       0.1588 ± 0.0014
+f1             0.263 ± 0.002
+roc_auc      0.7451 ± 0.0009
+
+=== original: fold 평균 feature importance top 15 ===
+industry_code                       1124.6
+store_age_months                     269.0
+snapshot_date                        255.6
+gu_name                              220.8
+dong_industry_historical_rate        163.8
+total_count_300m                     139.0
+same_industry_count_300m             111.6
+nearest_same_industry_distance_m     108.2
+dong_industry_count                   73.2
+previously_transitioned               67.6
+dong_historical_rate                  66.8
+transitioned_next                     55.0
+lat                                   50.4
+industry_jung_code                    49.4
+lng                                   38.8
+
+=== refined: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.905626   0.768535  0.160943  0.266150  0.746270
+1     0.905488   0.760537  0.159262  0.263372  0.745493
+2     0.905071   0.767032  0.156845  0.260435  0.745541
+3     0.904516   0.762265  0.160036  0.264533  0.743794
+4     0.905326   0.762222  0.157012  0.260387  0.744430
+
+=== refined: 평균 ± 표준편차 ===
+accuracy     0.9052 ± 0.0004
+precision    0.7641 ± 0.0035
+recall       0.1588 ± 0.0018
+f1            0.263 ± 0.0025
+roc_auc       0.7451 ± 0.001
+
+=== refined: fold 평균 feature importance top 15 ===
+industry_code                       1124.0
+store_age_months                     245.6
+snapshot_date                        227.8
+gu_name                              219.4
+dong_industry_historical_rate        146.8
+total_count_300m                     110.0
+nearest_same_industry_distance_m      92.2
+industry_specialization_300m          78.2
+previously_transitioned               65.0
+same_industry_count_300m              64.6
+dong_historical_rate                  64.0
+dong_industry_count                   60.8
+dong_industry_count_growth            57.2
+transitioned_next                     53.0
+industry_jung_code                    51.6
+
+=== 5-fold 평균 비교 요약 ===
+           original   refined
+accuracy   0.905215  0.905205
+precision  0.764445  0.764118
+recall     0.158821  0.158820
+f1         0.262997  0.262975
+roc_auc    0.745082  0.745106
