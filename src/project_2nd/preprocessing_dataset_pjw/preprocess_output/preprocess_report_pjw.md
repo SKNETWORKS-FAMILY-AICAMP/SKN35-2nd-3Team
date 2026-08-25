@@ -1,6 +1,6 @@
 # modeling_dataset_refined.csv — 전처리 v2 작업 기록
 
-원본(`modeling_dataset.csv`, 팀원 공유분)은 건드리지 않고, 별도 스크립트(`scripts/preprocess_v2.py`)로 정제본을 생성한다. 팀원 파이프라인 코드(`src/project_2nd/`)는 미변경.
+원본(`modeling_dataset.csv`, 팀원 공유분)은 건드리지 않고, 별도 스크립트(`preprocess_modeling_dataset_pjw.py`)로 정제본(`data/processed/modeling_dataset_refined_pjw.csv`)을 생성한다. 팀원 파이프라인 코드(`db/`, `features/`, `models/`, `preprocessing_dataset/`)는 미변경.
 
 ⚠️ **원본 파일 버전 주의**: 공유받은 `modeling_dataset.csv`가 실제로는 1,889,582행인데, `modeling_설명.md` 문서엔 2,591,877행이라고 적혀있음(약 27% 차이, 폐업 비율도 문서 9.2% vs 실제 10.6%). 파일-문서 버전이 안 맞는 것으로 보임 — 계속 작업하기 전에 팀원분께 최신 버전 확인 필요.
 
@@ -73,7 +73,7 @@ LightGBM 대비 훨씬 뚜렷한 개선. 트리와 달리 로지스틱회귀는 
 
 **영향 규모**: `transitioned_next=1`인 행은 전체의 0.94%뿐이라 지금까지의 성능 비교(원본 vs 정제본 둘 다 이 컬럼을 동일하게 포함한 채 비교했음)에 미치는 영향은 작았을 것으로 추정되지만, 실제 모델 제출 전엔 **`transitioned_next`를 피처 목록에서 제외**해야 한다.
 
-**처리 결과**: `preprocess_v2.py`에서 `transitioned_next`를 제거한 뒤 5-fold로 재검증. ROC-AUC 0.745082 → 0.744991(-0.00009, 노이즈 수준), F1은 오히려 소폭 상승(0.262997 → 0.263493). 예상대로 영향 규모가 작아서(전체의 0.94%) 성능 손실 없이 누수만 제거됨.
+**처리 결과**: `preprocess_modeling_dataset_pjw.py`에서 `transitioned_next`를 제거한 뒤 5-fold로 재검증. ROC-AUC 0.745082 → 0.744991(-0.00009, 노이즈 수준), F1은 오히려 소폭 상승(0.262997 → 0.263493). 예상대로 영향 규모가 작아서(전체의 0.94%) 성능 손실 없이 누수만 제거됨.
 
 ---
 

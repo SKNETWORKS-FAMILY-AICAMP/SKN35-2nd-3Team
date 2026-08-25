@@ -9,7 +9,7 @@ import lightgbm as lgb
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
-REFINED = Path(__file__).resolve().parents[1] / "data" / "processed" / "modeling_dataset_refined.csv"
+REFINED = Path(__file__).resolve().parents[4] / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 NON_FEATURE = {"store_id", "fold", "is_closed_next"}
 
 
@@ -51,7 +51,7 @@ target = "is_closed_next"
 full_feature_cols = [c for c in df.columns if c not in NON_FEATURE]
 no_dong_feature_cols = [c for c in full_feature_cols if c != "dong_code"]
 
-out_path = Path(__file__).resolve().parent / "compare_dongcode_ablation_result.txt"
+out_path = Path(__file__).resolve().parent / "compare_dongcode_ablation_result_pjw.txt"
 with open(out_path, "w", encoding="utf-8") as f:
     summary = {}
     for label, feature_cols in [("with_dong_code", full_feature_cols), ("without_dong_code", no_dong_feature_cols)]:

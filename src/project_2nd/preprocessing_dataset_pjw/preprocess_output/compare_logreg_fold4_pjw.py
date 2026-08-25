@@ -10,7 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 ORIGINAL = r"C:\Users\playdata2\Desktop\플젝 공유\files-20260825T001524Z-1-001\files\modeling_dataset.csv"
-REFINED = Path(__file__).resolve().parents[1] / "data" / "processed" / "modeling_dataset_refined.csv"
+REFINED = Path(__file__).resolve().parents[4] / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 NON_FEATURE = {"store_id", "fold", "is_closed_next"}
 
 
@@ -53,7 +53,7 @@ def run(path, label):
     return metrics
 
 
-out_path = Path(__file__).resolve().parent / "compare_logreg_fold4_result.txt"
+out_path = Path(__file__).resolve().parent / "compare_logreg_fold4_result_pjw.txt"
 results = {}
 for label, path in [("original", ORIGINAL), ("refined", REFINED)]:
     results[label] = run(path, label)
