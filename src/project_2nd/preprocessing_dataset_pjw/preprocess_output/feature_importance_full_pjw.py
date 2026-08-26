@@ -39,7 +39,10 @@ out = pd.DataFrame({
     "mean_split_importance": mean_imp.values.round(1),
     "pct_of_total": (mean_imp.values / total * 100).round(2),
 })
-out_path = Path(__file__).resolve().parent / "feature_importance_full_result_pjw.csv"
-out.to_csv(out_path, index=False, encoding="utf-8-sig")
+# *.csv는 .gitignore 대상이라 다른 검증 결과 파일들과 같은 확장자(.txt)로 저장
+out_path = Path(__file__).resolve().parent / "feature_importance_full_result_pjw.txt"
+with open(out_path, "w", encoding="utf-8") as f:
+    f.write(out.to_string(index=False))
+    f.write("\n")
 print(f"저장: {out_path}")
 print(out.to_string(index=False))
