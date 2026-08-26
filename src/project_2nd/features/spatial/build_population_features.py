@@ -23,9 +23,24 @@ FILES = {
     'foreign_short_pop': f'{RAW_DIR}/tempf_pop.csv',
 }
 
-# 서울시 25개 자치구 표준 코드 (행정동코드 앞 5자리). 생활인구 원본의 행정동코드가
-# 소상공인 원본 CSV의 행정동 목록에 없는 경우(실제 검증: 9개 동) gu_name을
-# 못 붙이므로, 표준 코드표로 fallback 채운다. dong_name(동 이름)까지는 코드만으로
+# 소상공인 원본 6개 스냅샷 (db/etl/build_store_snapshots.py, build_closure_transitions.py,
+# features/spatial/build_spatial_features.py 등 다른 스크립트와 동일한 RAW_FILES/ORDER 관례).
+# 동 이름 조회를 스냅샷 1개(예: 최신 202606)에만 의존하면, 그 시점에 매장이 하나도
+# 없던(폐업/신설 등) 행정동은 이름을 못 붙인다. 6개 스냅샷을 전부 합치면 어느 한
+# 시점에라도 매장이 있었던 동은 이름을 확보할 수 있다.
+RAW_FILES = {
+    '202312': f'{RAW_DIR}/seoul_202312.csv',
+    '202406': f'{RAW_DIR}/seoul_202406.csv',
+    '202412': f'{RAW_DIR}/seoul_202412.csv',
+    '202506': f'{RAW_DIR}/seoul_202506.csv',
+    '202512': f'{RAW_DIR}/seoul_202512.csv',
+    '202606': f'{RAW_DIR}/seoul_202606.csv',
+}
+ORDER = ['202312', '202406', '202412', '202506', '202512', '202606']
+
+# 서울시 25개 자치구 표준 코드 (행정동코드 앞 5자리). 6개 스냅샷을 다 합쳐도
+# 소상공인 데이터에 한 번도 등장하지 않는 행정동은 gu_name을 못 붙이므로,
+# 표준 코드표로 fallback 채운다. dong_name(동 이름)까지는 코드만으로
 # 유추 불가능하지만, 파이프라인 어디서도 조인키로 쓰지 않아 결측으로 남겨도 무방하다.
 GU_CODE_MAP = {
     '11110': '종로구', '11140': '중구', '11170': '용산구', '11200': '성동구',
@@ -53,21 +68,36 @@ pop['foreign_short_ratio'] = pop['foreign_short_pop'] / pop['total_pop_avg']
 threshold = pop['foreign_short_ratio'].quantile(0.90)
 pop['tourist_zone_candidate'] = pop['foreign_short_ratio'] >= threshold
 
-# 행정동명/구명 붙이기 (소상공인 원본 CSV에서 조회)
-dong_names = pd.read_csv('data/raw/seoul_202606.csv',
-                          usecols=['행정동코드', '행정동명', '시군구명'], dtype=str)
+# 행정동명/구명 붙이기 (소상공인 원본 CSV 6개 스냅샷 전체에서 조회)
+# 스냅샷 1개만 쓰면 그 시점에 매장이 없던 동이 누락되므로, 전체 스냅샷을
+# 합쳐 "어느 한 시점에라도 등장한 적 있는" 행정동코드-이름 매핑을 최대한 확보한다.
+dong_name_frames = []
+for snap in ORDER:
+    frame = pd.read_csv(RAW_FILES[snap], usecols=['행정동코드', '행정동명', '시군구명'], dtype=str)
+    dong_name_frames.append(frame)
+
+dong_names = pd.concat(dong_name_frames, ignore_index=True)
 dong_names = dong_names.drop_duplicates(subset=['행정동코드']).rename(
     columns={'행정동코드': 'dong_code', '행정동명': 'dong_name', '시군구명': 'gu_name'})
 
+print(f"동 이름 조회에 스냅샷 {len(ORDER)}개 사용, "
+      f"고유 행정동코드 {dong_names['dong_code'].nunique()}개 확보")
+
 pop = pop.merge(dong_names, on='dong_code', how='left')
 
-# 소상공인 목록에 없어 gu_name을 못 붙인 행정동은 표준 코드표로 fallback 채우기
+# 6개 스냅샷을 다 합쳐도 매칭 안 되는 행정동(소상공인 데이터에 한 번도 등장하지
+# 않은 동)만 표준 코드표로 gu_name을 fallback 채운다.
 n_missing_before = pop['gu_name'].isna().sum()
 pop['gu_name'] = pop['gu_name'].fillna(pop['dong_code'].str[:5].map(GU_CODE_MAP))
 n_missing_after = pop['gu_name'].isna().sum()
 if n_missing_before > 0:
     print(f"gu_name 결측 {n_missing_before}건 중 {n_missing_before - n_missing_after}건을 "
           f"표준 자치구코드로 채움 (남은 결측 {n_missing_after}건)")
+
+n_dong_name_missing = pop['dong_name'].isna().sum()
+if n_dong_name_missing > 0:
+    print(f"dong_name 결측 {n_dong_name_missing}건 남음 "
+          f"(6개 스냅샷 전체에도 등장하지 않은 행정동 — 조인키로 미사용이라 무방)")
 
 cols = ['dong_code', 'dong_name', 'gu_name', 'korean_pop', 'foreign_long_pop', 'foreign_short_pop',
         'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate']
