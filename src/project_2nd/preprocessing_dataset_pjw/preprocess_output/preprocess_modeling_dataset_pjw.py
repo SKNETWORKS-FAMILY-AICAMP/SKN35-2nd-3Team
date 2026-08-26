@@ -36,6 +36,16 @@ v4 적용 내역:
    ROC-AUC 0.747610 vs 0.747853, 표준편차 0.0007~0.0009 범위 안). LightGBM이 결측을
    자체적으로 잘 처리해서 굳이 대체할 필요가 없다고 판단, `population_imputed` 플래그도
    같이 제거(결측 자체가 이미 그 정보를 담고 있어 플래그가 중복)
+4. is_left_censored_age 플래그 추가 — store_age_months는 첫 스냅샷(202312)을 기준으로
+   계산되는데, 그 시점에 이미 존재하던 매장(전체의 78.85%)은 실제 개업일을 몰라 나이가
+   과소추정됨(팀원분 한계점 문서에 명시된 이슈). data/features/stores.csv의
+   first_seen_snapshot=='202312' 여부를 플래그로 노출. exp_b로 5-fold 검증 — 전부
+   일관되게 ROC-AUC 개선(단독 +0.0003)
+4.5. is_trend_keyword_match 플래그 추가 — 기존 keyword_growth_score는 growth_rate<=0인
+   키워드가 매칭돼도 값이 0으로 남아 "매칭 안 됨"과 구분이 안 됨(실제로 4,839행이 이 케이스).
+   data/features/store_snapshots.csv(store_name)와 trend_keywords.csv(keyword)를 조인해
+   매칭 여부 자체를 이진 플래그로 분리. exp_b로 5-fold 검증 — 전부 일관되게 ROC-AUC 개선
+   (단독 +0.00015, censor_flag와 함께 넣으면 +0.0004)
 5. 파생 피처 3종 추가 — 전부 기존 컬럼 조합만 사용, 새 원본 데이터 불필요
    - industry_specialization_300m: same_industry_count_300m / total_count_300m (업종 특화도).
      total_count_300m==0이면 정의 불가라 NaN
@@ -50,7 +60,8 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SRC = REPO_ROOT / "data" / "features" / "modeling_dataset.csv"
+FEATURES_DIR = REPO_ROOT / "data" / "features"
+SRC = FEATURES_DIR / "modeling_dataset.csv"
 OUT = REPO_ROOT / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +83,34 @@ df["gu_name"] = df["gu_name"].fillna(prefix5.map(prefix_to_gu))
 
 # 생활인구 결측(korean_pop 등)은 의도적으로 그대로 둔다 — exp_a_pop_impute.py 검증 결과
 # gu 평균 대체와 통계적으로 동률이라 LightGBM의 기본 결측 처리에 맡김
+
+# store_age_months 좌측절단(left-censoring) 플래그: 첫 스냅샷(202312)에 이미 존재하던
+# 매장은 실제 개업일을 몰라 나이가 과소추정됨(팀원분 한계점 문서에 명시) — exp_b_age_kw.py로
+# 검증(5-fold 전부 일관되게 ROC-AUC 개선, +censor_flag 단독 +0.0003)
+stores = pd.read_csv(FEATURES_DIR / "stores.csv", dtype={"store_id": str, "first_seen_snapshot": str})
+first_seen_map = dict(zip(stores["store_id"], stores["first_seen_snapshot"]))
+df["is_left_censored_age"] = (df["store_id"].map(first_seen_map) == "202312").astype(int)
+
+# 트렌드 키워드 이진 매칭 플래그: 기존 keyword_growth_score는 growth_rate<=0인 키워드가
+# 매칭돼도 0으로 남아 "매칭 안 됨"과 구분이 안 됨 — exp_b_age_kw.py로 검증
+# (5-fold 전부 일관되게 ROC-AUC 개선, +kw_flag 단독 +0.00015, censor_flag와 함께 넣으면 +0.0004)
+_snapshots = pd.read_csv(
+    FEATURES_DIR / "store_snapshots.csv",
+    dtype={"store_id": str, "snapshot_date": str},
+    usecols=["store_id", "snapshot_date", "store_name"],
+)
+_trend_kw = pd.read_csv(FEATURES_DIR / "trend_keywords.csv")
+_keywords = _trend_kw["keyword"].dropna().unique().tolist()
+
+_join_key = df[["store_id", "snapshot_date"]].copy()
+_join_key["snapshot_date"] = _join_key["snapshot_date"].astype(str)
+_merged = _join_key.merge(_snapshots, on=["store_id", "snapshot_date"], how="left")
+_store_name = _merged["store_name"].fillna("")
+
+_is_match = pd.Series(False, index=df.index)
+for _kw in _keywords:
+    _is_match |= _store_name.str.contains(_kw, na=False, regex=False)
+df["is_trend_keyword_match"] = _is_match.astype(int)
 
 # --- 파생 피처 3종 ---
 df["industry_specialization_300m"] = (
@@ -96,6 +135,8 @@ df.to_csv(OUT, index=False)
 print(f"저장: {OUT}")
 print(f"행수: {len(df)}, 컬럼수: {len(df.columns)}")
 print(f"is_mass_reclass_window=1: {df['is_mass_reclass_window'].sum()}")
+print(f"is_left_censored_age=1: {df['is_left_censored_age'].sum()}")
+print(f"is_trend_keyword_match=1: {df['is_trend_keyword_match'].sum()}")
 print(f"gu_name 남은 결측: {df['gu_name'].isna().sum()}")
 for c in ["industry_specialization_300m", "competition_per_capita_300m", "dong_industry_count_growth"]:
     print(f"{c} 결측: {df[c].isna().sum()} ({df[c].isna().mean():.2%})")
