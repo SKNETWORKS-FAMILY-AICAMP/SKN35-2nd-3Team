@@ -20,10 +20,26 @@ models/ml/build_modeling_dataset.py
 import pandas as pd
 import numpy as np
 import hashlib
+from sklearn.neighbors import BallTree
 
 FEATURES_DIR = 'data/features'
 ORDER = ['202312', '202406', '202412', '202506', '202512', '202606']
 snap_idx = {s: i for i, s in enumerate(ORDER)}
+
+# 서울시 25개 자치구 표준 코드 (행정동코드 앞 5자리). population_features.csv는
+# 생활인구 원본 3개 CSV에 등장하는 행정동만 포함하므로, 상가업소 데이터에는
+# 있지만 생활인구 원본에는 없는 행정동(실제 검증: 12개 동, 약 3만행)은 population과의
+# 조인이 통째로 실패해 gu_name까지 결측이 된다. gu_name은 dong_code만으로도
+# 코드 체계상 100% 확정되는 값이라, 조인 결과와 무관하게 이 표로 보강한다.
+GU_CODE_MAP = {
+    '11110': '종로구', '11140': '중구', '11170': '용산구', '11200': '성동구',
+    '11215': '광진구', '11230': '동대문구', '11260': '중랑구', '11290': '성북구',
+    '11305': '강북구', '11320': '도봉구', '11350': '노원구', '11380': '은평구',
+    '11410': '서대문구', '11440': '마포구', '11470': '양천구', '11500': '강서구',
+    '11530': '구로구', '11545': '금천구', '11560': '영등포구', '11590': '동작구',
+    '11620': '관악구', '11650': '서초구', '11680': '강남구', '11710': '송파구',
+    '11740': '강동구',
+}
 
 
 def fold_of(store_id, k=5):
@@ -51,6 +67,57 @@ df = df.merge(industries[['industry_code', 'industry_name', 'industry_jung_code'
                            'industry_jung_name', 'industry_dae_code', 'custom_group']],
               on='industry_code', how='left')
 df = df.rename(columns={'custom_group': 'industry_group'})
+
+# gu_name 보강: population_features.csv에 없는 행정동이라 조인이 실패해도,
+# dong_code 앞 5자리 -> 자치구 매핑은 항상 성립하므로 여기서 100% 채운다.
+n_gu_missing_before = df['gu_name'].isna().sum()
+df['gu_name'] = df['gu_name'].fillna(df['dong_code'].str[:5].map(GU_CODE_MAP))
+n_gu_missing_after = df['gu_name'].isna().sum()
+if n_gu_missing_before > 0:
+    print(f"gu_name 결측 {n_gu_missing_before:,}건 중 "
+          f"{n_gu_missing_before - n_gu_missing_after:,}건을 자치구코드로 보강 "
+          f"(남은 결측 {n_gu_missing_after:,}건)")
+
+# 생활인구 피처(korean_pop 등)는 dong_code 자체가 population_features.csv에 없으면
+# 코드로 보강할 수 없는 진짜 결측이다. features/spatial/build_spatial_features.py에서
+# 이미 쓰고 있는 BallTree(haversine) 방식을 재사용해서, 인구 데이터가 없는 동의
+# 매장 좌표 중심점(centroid)을 구한 뒤 "가장 가까운, 인구 데이터가 있는 동"의
+# 값을 근사치로 빌려온다(정밀한 폴리곤 매칭은 아니지만, 인접 동의 인구 수준을
+# 대리값으로 쓰는 것은 합리적인 근사다).
+POP_FEATURE_COLS = ['korean_pop', 'foreign_long_pop', 'foreign_short_pop',
+                     'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate']
+pop_missing_mask = df['korean_pop'].isna()
+df['population_is_proxied'] = False
+
+if pop_missing_mask.any():
+    missing_dongs = sorted(df.loc[pop_missing_mask, 'dong_code'].unique())
+    known_dongs = sorted(df.loc[~pop_missing_mask, 'dong_code'].unique())
+    print(f"⚠ 생활인구 피처 결측 {pop_missing_mask.sum():,}행 "
+          f"({len(missing_dongs)}개 동, population_features.csv에 해당 dong_code 없음): "
+          f"{missing_dongs}")
+
+    # 동별 매장 좌표 중심점(centroid) 계산 (라디안 변환, haversine용)
+    centroids = df.groupby('dong_code')[['lat', 'lng']].mean()
+    known_centroids = centroids.loc[known_dongs]
+    missing_centroids = centroids.loc[missing_dongs]
+
+    tree = BallTree(np.radians(known_centroids[['lat', 'lng']].values), metric='haversine')
+    dist, idx = tree.query(np.radians(missing_centroids[['lat', 'lng']].values), k=1)
+    nearest_dong_map = dict(zip(missing_dongs, known_centroids.index[idx.flatten()]))
+    nearest_dist_km = dict(zip(missing_dongs, (dist.flatten() * 6371)))  # 지구 반경(km)
+
+    # 동별 인구 피처값(known dong 기준 1행)을 조회용 테이블로 준비
+    pop_by_dong = df.loc[~pop_missing_mask].drop_duplicates('dong_code').set_index('dong_code')[POP_FEATURE_COLS]
+
+    for missing_dong, nearest_dong in nearest_dong_map.items():
+        row_mask = df['dong_code'] == missing_dong
+        df.loc[row_mask, POP_FEATURE_COLS] = pop_by_dong.loc[nearest_dong].values
+        df.loc[row_mask, 'population_is_proxied'] = True
+        print(f"  {missing_dong} -> 최근접 {nearest_dong} 값으로 대체 "
+              f"(중심점간 거리 {nearest_dist_km[missing_dong]:.2f}km, {row_mask.sum():,}행)")
+
+    print(f"population_is_proxied=True: {df['population_is_proxied'].sum():,}행 "
+          f"(최근접 동 값으로 대체한 근사치 — 결과서에 한계로 명시 필요)")
 
 # 매장나이
 first_seen_map = dict(zip(stores['store_id'], stores['first_seen_snapshot']))
@@ -117,7 +184,7 @@ final_cols = ['snapshot_date', 'store_id', 'industry_dae_code', 'industry_group'
               'same_industry_count_300m', 'total_count_300m', 'nearest_same_industry_distance_m',
               'dong_industry_count', 'coord_cluster_size', 'store_age_months', 'previously_transitioned',
               'keyword_growth_score', 'korean_pop', 'foreign_long_pop', 'foreign_short_pop',
-              'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate',
+              'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate', 'population_is_proxied',
               'industry_historical_rate', 'dong_historical_rate', 'dong_industry_historical_rate',
               'transitioned_next', 'fold', 'is_closed_next']
 
