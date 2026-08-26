@@ -30,9 +30,12 @@ v4 적용 내역:
    문서의 "9개 동 매칭 실패"와 같은 종류 이슈, 새 파이프라인에서 12개로 늘어남) 복구.
    dong_code 앞 5자리(구 코드)가 같은 다른 행의 gu_name으로 매핑해보니 12개 전부 모호함
    없이 gu_name 하나로 정확히 복원됨(강북구 6/강동구 2/동대문구 2/구로구 1/강남구 1).
-   이 매핑을 활용해 gu_name을 먼저 채운 뒤, 아래 3번 인구 결측 대체도 정상 작동하게 함
-3. 생활인구 결측을 같은 gu_name 평균/최빈값으로 대체 (2.5번으로 gu_name 복구된 뒤에 수행)
-4. population_imputed 플래그 추가
+   범주형 gu_name은 결측으로 두면 안 되니 여기서 채움
+3. 생활인구(korean_pop 등) 결측은 채우지 않고 그대로 둠 — gu 평균 대체 vs 결측 유지를
+   5-fold로 직접 비교(exp_a)해보니 통계적으로 동률(오히려 결측 유지 쪽이 근소 우세,
+   ROC-AUC 0.747610 vs 0.747853, 표준편차 0.0007~0.0009 범위 안). LightGBM이 결측을
+   자체적으로 잘 처리해서 굳이 대체할 필요가 없다고 판단, `population_imputed` 플래그도
+   같이 제거(결측 자체가 이미 그 정보를 담고 있어 플래그가 중복)
 5. 파생 피처 3종 추가 — 전부 기존 컬럼 조합만 사용, 새 원본 데이터 불필요
    - industry_specialization_300m: same_industry_count_300m / total_count_300m (업종 특화도).
      total_count_300m==0이면 정의 불가라 NaN
@@ -52,7 +55,6 @@ OUT = REPO_ROOT / "data" / "processed" / "modeling_dataset_refined_pjw.csv"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 DROP_COLS = ["total_pop_avg", "transitioned_next", "dong_code"]
-POP_COLS = ["korean_pop", "foreign_long_pop", "foreign_short_pop", "foreign_short_ratio"]
 
 df = pd.read_csv(SRC)
 
@@ -68,30 +70,23 @@ prefix_to_gu = (
 )
 df["gu_name"] = df["gu_name"].fillna(prefix5.map(prefix_to_gu))
 
-pop_missing = df["korean_pop"].isna()
-df["population_imputed"] = pop_missing.astype(int)
-
-gu_means = df.groupby("gu_name")[POP_COLS].transform("mean")
-for col in POP_COLS:
-    df[col] = df[col].fillna(gu_means[col])
-
-gu_mode = df.groupby("gu_name")["tourist_zone_candidate"].transform(lambda s: s.mode().iloc[0] if s.notna().any() else 0)
-df["tourist_zone_candidate"] = df["tourist_zone_candidate"].fillna(gu_mode)
+# 생활인구 결측(korean_pop 등)은 의도적으로 그대로 둔다 — exp_a_pop_impute.py 검증 결과
+# gu 평균 대체와 통계적으로 동률이라 LightGBM의 기본 결측 처리에 맡김
 
 # --- 파생 피처 3종 ---
 df["industry_specialization_300m"] = (
-    df["same_industry_count_300m"] / df["total_count_300m"].replace(0, pd.NA)
+    df["same_industry_count_300m"] / df["total_count_300m"].replace(0, float("nan"))
 )
 
 local_pop = df["korean_pop"] + df["foreign_long_pop"] + df["foreign_short_pop"]
 df["competition_per_capita_300m"] = (
-    df["same_industry_count_300m"] / local_pop.replace(0, pd.NA)
+    df["same_industry_count_300m"] / local_pop.replace(0, float("nan"))
 )
 
 df = df.sort_values(["dong_code", "industry_code", "snapshot_date"])
 grp = df.groupby(["dong_code", "industry_code"])["dong_industry_count"]
 prev = grp.shift(1)
-df["dong_industry_count_growth"] = (df["dong_industry_count"] - prev) / prev.replace(0, pd.NA)
+df["dong_industry_count_growth"] = (df["dong_industry_count"] - prev) / prev.replace(0, float("nan"))
 df = df.sort_index()
 
 df = df.drop(columns=DROP_COLS)
@@ -100,8 +95,8 @@ df.to_csv(OUT, index=False)
 
 print(f"저장: {OUT}")
 print(f"행수: {len(df)}, 컬럼수: {len(df.columns)}")
-print(f"population_imputed=1: {df['population_imputed'].sum()}")
 print(f"is_mass_reclass_window=1: {df['is_mass_reclass_window'].sum()}")
+print(f"gu_name 남은 결측: {df['gu_name'].isna().sum()}")
 for c in ["industry_specialization_300m", "competition_per_capita_300m", "dong_industry_count_growth"]:
     print(f"{c} 결측: {df[c].isna().sum()} ({df[c].isna().mean():.2%})")
-print(f"기존 컬럼 중 남은 결측치:\n{df.drop(columns=['industry_specialization_300m', 'competition_per_capita_300m', 'dong_industry_count_growth']).isna().sum().pipe(lambda s: s[s > 0])}")
+print(f"전체 결측치:\n{df.isna().sum().pipe(lambda s: s[s > 0])}")
