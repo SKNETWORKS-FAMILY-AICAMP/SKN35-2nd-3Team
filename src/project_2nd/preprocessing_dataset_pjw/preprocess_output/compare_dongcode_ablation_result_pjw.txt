@@ -1,0 +1,63 @@
+=== with_dong_code: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.906631   0.767264  0.174999  0.284995  0.748748
+1     0.906285   0.756872  0.171817  0.280058  0.748348
+2     0.906232   0.767432  0.172330  0.281457  0.748159
+3     0.905610   0.764456  0.173910  0.283357  0.747034
+4     0.906456   0.769493  0.169432  0.277715  0.746975
+
+=== with_dong_code: 평균 ± 표준편차 ===
+accuracy     0.9062 ± 0.0004
+precision    0.7651 ± 0.0049
+recall       0.1725 ± 0.0021
+f1           0.2815 ± 0.0028
+roc_auc      0.7479 ± 0.0008
+
+=== with_dong_code: fold 평균 feature importance top 10 ===
+industry_code                       1192.0
+store_age_months                     232.4
+snapshot_date                        219.4
+gu_name                              203.4
+dong_industry_historical_rate        121.0
+floor_category                       103.8
+total_count_300m                      89.4
+nearest_same_industry_distance_m      88.2
+coord_cluster_size                    84.0
+previously_transitioned               77.8
+
+=== without_dong_code: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.906631   0.767264  0.174999  0.284995  0.748748
+1     0.906285   0.756872  0.171817  0.280058  0.748348
+2     0.906232   0.767432  0.172330  0.281457  0.748159
+3     0.905610   0.764456  0.173910  0.283357  0.747034
+4     0.906456   0.769493  0.169432  0.277715  0.746975
+
+=== without_dong_code: 평균 ± 표준편차 ===
+accuracy     0.9062 ± 0.0004
+precision    0.7651 ± 0.0049
+recall       0.1725 ± 0.0021
+f1           0.2815 ± 0.0028
+roc_auc      0.7479 ± 0.0008
+
+=== without_dong_code: fold 평균 feature importance top 10 ===
+industry_code                       1192.0
+store_age_months                     232.4
+snapshot_date                        219.4
+gu_name                              203.4
+dong_industry_historical_rate        121.0
+floor_category                       103.8
+total_count_300m                      89.4
+nearest_same_industry_distance_m      88.2
+coord_cluster_size                    84.0
+previously_transitioned               77.8
+
+=== 비교 요약 ===
+           with_dong_code  without_dong_code
+accuracy         0.906243           0.906243
+precision        0.765103           0.765103
+recall           0.172498           0.172498
+f1               0.281517           0.281517
+roc_auc          0.747853           0.747853
