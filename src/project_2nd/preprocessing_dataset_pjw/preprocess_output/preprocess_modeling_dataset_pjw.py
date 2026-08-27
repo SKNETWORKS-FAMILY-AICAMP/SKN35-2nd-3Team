@@ -2,6 +2,20 @@
 
 원본 파일은 건드리지 않는다 (팀원 파이프라인 코드/산출물 미변경).
 
+v5 (2026-08-26 재실행): 팀원분(taemin1997) "결측 해소" 커밋으로 gu_name/생활인구
+결측이 파이프라인 상류(build_modeling_dataset.py, build_population_features.py)에서
+직접 해결됨 — gu_name은 우리와 동일한 dong_code 앞 5자리 매핑 방식으로 100% 채워지고,
+생활인구는 BallTree 최근접 이웃으로 근사 대체(`population_is_proxied` 플래그 컬럼 추가).
+이에 따라:
+- 아래 2.5번(gu_name 복구) 코드는 이제 항상 결측 0건이라 사실상 no-op이지만, 안전망으로
+  그대로 둠(향후 상류가 다시 바뀌어도 방어됨)
+- 3번(생활인구 결측 유지) 관련 실험(exp_a)은 더 이상 유효하지 않음 — 이제 결측 자체가
+  거의 없어짐(대신 근사치로 채워짐). `population_is_proxied`는 새 컬럼이라 그대로 통과시킴
+- modeling_dataset.csv 재실행 시 Windows 콘솔(cp949)에서 팀원 코드의 em dash(—) 출력이
+  깨지는 인코딩 이슈 있음 — `PYTHONIOENCODING=utf-8`로 우회(팀원 코드 자체는 수정 안 함)
+재검증 결과: ROC-AUC 원본 0.747793, 정제본 0.748440 (+0.00065) — v4 대비 오히려 개선폭이
+소폭 커짐(censor/keyword 플래그 효과가 더 깨끗한 데이터 위에서 더 잘 드러난 것으로 추정)
+
 v4 (2026-08-26): 팀원분이 파이프라인에 floor_category(층정보, ROC-AUC 0.721→0.728로
 검증된 유일한 효과 있는 피처)와 coord_cluster_size(DBSCAN 기반, 저희가 만들었던
 exact-match 버전보다 정교함 — 스냅샷 간 좌표 미세 오차까지 하나의 건물/복합상가로
