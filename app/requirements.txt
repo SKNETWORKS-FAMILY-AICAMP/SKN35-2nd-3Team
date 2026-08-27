@@ -8,3 +8,10 @@ shap
 joblib
 folium
 streamlit-folium
+
+# DB 연결 (app/shared/db.py, db/etl/load_to_tidb.py 공용)
+sqlalchemy
+pymysql
+python-dotenv
+certifi
+cryptography
