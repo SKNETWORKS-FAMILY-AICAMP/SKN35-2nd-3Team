@@ -1,0 +1,82 @@
+{
+  "run_id": "DNN_20260828_001038_e807fa0_time_safe",
+  "created_at_kst": "2026-08-28T00:10:38.989494+09:00",
+  "command": [
+    "C:\\codes\\.venvs\\SKN35-2nd-3Team-dl-gpu\\Scripts\\python.exe",
+    "src\\project_2nd\\models\\dl\\train_dnn.py"
+  ],
+  "git_branch": "jjb",
+  "git_commit": "e807fa0ef5e68db3dd019d39cbb4499b386095a8",
+  "dataset_path": "C:\\codes\\SKN35-2nd-3Team\\data\\processed\\modeling_dataset_preprocessed_pmh.csv",
+  "dataset_sha256": "FB3F48257EAD86E39C39963474139CC8F2D4341AB6E2770E0D7A4D39D9039DBC",
+  "prepared_data_dir": "C:\\codes\\SKN35-2nd-3Team\\data\\processed\\dnn_pmh_time_safe",
+  "python_version": "3.12.13",
+  "torch_version": "2.13.0+cu126",
+  "cuda_build": "12.6",
+  "cuda_available": true,
+  "gpu_name": "NVIDIA GeForce RTX 3070",
+  "driver_version": "591.86",
+  "sklearn_version": "1.9.0",
+  "seed": 42,
+  "model_config": {
+    "hidden_dims": [
+      256,
+      128,
+      64
+    ],
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "batch_size": 4096,
+    "max_epochs": 7,
+    "early_stopping_patience": 2,
+    "seed": 42
+  },
+  "model_parameter_count": 46977,
+  "split_definition": {
+    "train": [
+      0,
+      1,
+      2
+    ],
+    "validation": [
+      3
+    ],
+    "test": [
+      4
+    ]
+  },
+  "split_counts": {
+    "train_fold_0_2": 1137077,
+    "validation_fold_3": 375496,
+    "test_fold_4": 377009
+  },
+  "feature_policy": "time_safe",
+  "feature_names": [
+    "snapshot_month_index",
+    "lng",
+    "lat",
+    "same_industry_count_300m",
+    "total_count_300m",
+    "nearest_same_industry_distance_m",
+    "dong_industry_count",
+    "coord_cluster_size",
+    "store_age_months",
+    "industry_dae_code_enc",
+    "industry_group_enc",
+    "industry_jung_code_enc",
+    "industry_jung_name_enc",
+    "industry_code_enc",
+    "industry_name_enc",
+    "gu_name_enc",
+    "dong_code_enc",
+    "floor_category_enc"
+  ],
+  "target_name": "is_closed_next",
+  "output_scale": "logit; sigmoid is an uncalibrated risk score",
+  "notes": [
+    "model selection used validation PR-AUC only",
+    "classification threshold was selected on validation only",
+    "test was evaluated after model and threshold selection"
+  ]
+}

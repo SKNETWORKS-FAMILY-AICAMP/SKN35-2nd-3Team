@@ -1,0 +1,17 @@
+RUN_ID: DNN_20260828_001038_e807fa0_time_safe
+장치: cuda:0 (NVIDIA GeForce RTX 3070)
+분할: train=1,137,077, validation=375,496, test=377,009
+입력 피처 수: 18
+pos_weight: 8.404714
+max epochs=7, seed=42, batch=4096
+Epoch 1/7 | train_loss=1.149535 | val_loss=1.112239 | val_PR-AUC=0.301034 | val_ROC-AUC=0.704955
+Epoch 2/7 | train_loss=1.115582 | val_loss=1.100437 | val_PR-AUC=0.321684 | val_ROC-AUC=0.711070
+Epoch 3/7 | train_loss=1.104802 | val_loss=1.096818 | val_PR-AUC=0.328355 | val_ROC-AUC=0.713577
+Epoch 4/7 | train_loss=1.099635 | val_loss=1.092194 | val_PR-AUC=0.335304 | val_ROC-AUC=0.715869
+Epoch 5/7 | train_loss=1.095524 | val_loss=1.088763 | val_PR-AUC=0.341102 | val_ROC-AUC=0.717589
+Epoch 6/7 | train_loss=1.091527 | val_loss=1.086523 | val_PR-AUC=0.344124 | val_ROC-AUC=0.718696
+Epoch 7/7 | train_loss=1.088955 | val_loss=1.083591 | val_PR-AUC=0.348084 | val_ROC-AUC=0.720057
+최적 epoch: 7, validation PR-AUC=0.348084
+validation 선택 threshold: 0.656985
+TEST | PR-AUC=0.345517 | ROC-AUC=0.719365 | F1=0.360990 | Precision=0.355476 | Recall=0.366678
+완료 산출물: C:\codes\SKN35-2nd-3Team\src\project_2nd\models\dl\saved\runs\DNN_20260828_001038_e807fa0_time_safe
