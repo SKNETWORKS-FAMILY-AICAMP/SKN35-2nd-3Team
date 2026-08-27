@@ -2,26 +2,22 @@
 # modeling_dataset.csv 전처리 리포트 (pmh)
 
 - 입력 행 수: 1,889,582
+- data/raw는 읽지 않음 (원본에 gu_name/생활인구 결측이 이미 없어 조회 불필요)
 
-## 1. gu_name 결측 복구
+## 1. 원본 결측치 현황
 
-- 복구 전 gu_name 결측: 30,181행
-- 복구 후 gu_name 결측: 0행 (data/raw 6개 스냅샷 전체 조회로 복구, data/raw는 읽기만 함)
+- 전체 결측치: 0건
+- population_is_proxied=True 비율: 1.60% (생활인구가 대체값으로 채워진 행, 원본 파이프라인 단계에서 이미 처리됨)
 
-## 2. 생활인구 결측 대체
-
-- 생활인구 5개 수치 컬럼 결측(대체 전): 30,181행 -> gu_name 그룹 중앙값으로 대체
-- tourist_zone_candidate 결측(대체 전): 30,181행 -> False(최빈값)로 대체
-
-## 3. nearest_same_industry_distance_m 결측 처리
+## 2. nearest_same_industry_distance_m 결측 처리
 
 - 결측 0행을 9999.0(동일업종 없음을 의미하는 상수)로 대체
 
-## 4. bool 컬럼 정수 변환
+## 3. bool 컬럼 정수 변환
 
-- transitioned_next, tourist_zone_candidate -> 0/1 정수로 변환
+- transitioned_next, tourist_zone_candidate, population_is_proxied -> 0/1 정수로 변환
 
-## 5. 범주형 라벨 인코딩
+## 4. 범주형 라벨 인코딩
 
 - industry_dae_code -> industry_dae_code_enc (카디널리티=7)
 - industry_group -> industry_group_enc (카디널리티=7)
@@ -38,6 +34,6 @@
 ## 결과
 
 - 출력 행 수: 1,889,582 (입력과 동일, 행 제거 없음)
-- 출력 컬럼 수: 42 (원본 33 + 인코딩 9)
+- 출력 컬럼 수: 43 (원본 34 + 인코딩 9)
 - 최종 결측치: 0건
 - 저장 위치: data/processed/modeling_dataset_preprocessed_pmh.csv

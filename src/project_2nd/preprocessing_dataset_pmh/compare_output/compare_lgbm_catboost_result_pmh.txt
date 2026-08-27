@@ -1,0 +1,73 @@
+=== lightgbm: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.906670   0.764186  0.176868  0.287252  0.747575
+1     0.906422   0.749186  0.177262  0.286691  0.748082
+2     0.906156   0.759764  0.174598  0.283944  0.747933
+3     0.905709   0.763399  0.175697  0.285651  0.746044
+4     0.906538   0.758714  0.175155  0.284606  0.746823
+
+=== lightgbm: 평균 ± 표준편차 ===
+accuracy     0.9063 ± 0.0004
+precision      0.759 ± 0.006
+recall       0.1759 ± 0.0011
+f1           0.2856 ± 0.0014
+roc_auc      0.7473 ± 0.0009
+
+=== lightgbm: fold 평균 feature importance top 15 ===
+dong_code                           1276.2
+industry_code                        903.6
+snapshot_date                        172.2
+store_age_months                     160.0
+dong_industry_historical_rate         87.8
+floor_category                        77.2
+transitioned_next                     49.0
+nearest_same_industry_distance_m      46.8
+industry_jung_code                    44.2
+previously_transitioned               41.0
+coord_cluster_size                    35.0
+total_count_300m                      26.2
+same_industry_count_300m              20.6
+dong_industry_count                   17.0
+industry_historical_rate              14.8
+
+=== catboost: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc
+fold                                                   
+0     0.902825   0.625709  0.214350  0.319312  0.751988
+1     0.903444   0.638808  0.206747  0.312391  0.746346
+2     0.904295   0.662067  0.208206  0.316789  0.745232
+3     0.901730   0.622128  0.214365  0.318861  0.745878
+4     0.903708   0.643614  0.207917  0.314300  0.746474
+
+=== catboost: 평균 ± 표준편차 ===
+accuracy      0.9032 ± 0.001
+precision    0.6385 ± 0.0159
+recall       0.2103 ± 0.0037
+f1            0.3163 ± 0.003
+roc_auc      0.7472 ± 0.0027
+
+=== catboost: fold 평균 feature importance top 15 ===
+store_age_months                    17.940042
+previously_transitioned             17.526007
+snapshot_date                       10.934555
+transitioned_next                    9.981873
+dong_industry_historical_rate        5.880181
+industry_historical_rate             5.773542
+dong_code                            3.514431
+floor_category                       3.375758
+industry_code                        3.180305
+nearest_same_industry_distance_m     2.362971
+dong_industry_count                  2.173890
+industry_dae_code                    1.902072
+total_count_300m                     1.874686
+industry_name                        1.734636
+industry_group                       1.556847
+
+=== 5-fold 평균 비교 요약 (LightGBM vs CatBoost) ===
+           lightgbm  catboost
+accuracy   0.906299  0.903201
+precision  0.759050  0.638465
+recall     0.175916  0.210317
+f1         0.285629  0.316331
+roc_auc    0.747292  0.747184
