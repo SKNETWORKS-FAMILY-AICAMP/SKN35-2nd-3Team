@@ -1,4 +1,4 @@
-# 서울 상권 폐업예측 — 데이터 파이프라인 전체를 한 번에 실행 (Windows PowerShell용)
+﻿# 서울 상권 폐업예측 — 데이터 파이프라인 전체를 한 번에 실행 (Windows PowerShell용)
 #
 # 실행 위치: 저장소 루트 (SKN35-2nd-3Team\) 에서
 #   .\run_pipeline.ps1
