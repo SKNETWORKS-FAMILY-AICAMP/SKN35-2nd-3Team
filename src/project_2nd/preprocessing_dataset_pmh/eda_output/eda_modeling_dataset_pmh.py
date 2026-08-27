@@ -11,7 +11,7 @@ preprocessing_dataset_pmh/eda_output/eda_modeling_dataset_pmh.py
   4. 범주형 변수 분포/카디널리티 (floor_category 포함)
   5. 타겟과의 이변량 관계 (수치형 그룹평균, 범주형별 폐업률, 시점별 추이)
   6. 수치형 변수 상관관계
-  7. 결측치 패턴 (생활인구, 최근접 동일업종 거리)
+  7. 결측치 패턴 (population_is_proxied 플래그, 최근접 동일업종 거리)
 
 입력: data/features/modeling_dataset.csv (읽기 전용)
 출력: src/project_2nd/preprocessing_dataset_pmh/eda_output/ 아래 png 그래프 + eda_report_pmh.md
@@ -36,7 +36,8 @@ ID_COLS = ['snapshot_date', 'store_id', 'fold']
 CATEGORICAL_COLS = ['industry_dae_code', 'industry_group', 'industry_jung_code',
                      'industry_jung_name', 'industry_code', 'industry_name',
                      'gu_name', 'dong_code', 'floor_category']
-BINARY_COLS = ['previously_transitioned', 'tourist_zone_candidate', 'transitioned_next']
+BINARY_COLS = ['previously_transitioned', 'tourist_zone_candidate', 'transitioned_next',
+               'population_is_proxied']
 NUMERIC_COLS = ['lng', 'lat', 'same_industry_count_300m', 'total_count_300m',
                 'nearest_same_industry_distance_m', 'dong_industry_count',
                 'coord_cluster_size', 'store_age_months', 'keyword_growth_score',
@@ -217,22 +218,29 @@ h("타겟과의 상관계수 (절대값 순)", level=3)
 p(tbl(target_corr))
 
 # ---------------------------------------------------------------
-# 7. 결측치 패턴
+# 7. 결측치 패턴 / population_is_proxied 플래그
 # ---------------------------------------------------------------
-h("7. 결측치 패턴")
+h("7. 결측치 패턴 / population_is_proxied 플래그")
 
-pop_cols = ['korean_pop', 'foreign_long_pop', 'foreign_short_pop',
-            'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate']
-pop_missing_mask = df[pop_cols].isna().any(axis=1)
-missing_dongs = df.loc[pop_missing_mask, 'dong_code'].unique()
-p(f"- 생활인구 결측 행: {pop_missing_mask.sum():,}건 ({pop_missing_mask.mean() * 100:.2f}%)")
-p(f"- 결측이 발생하는 dong_code 수: {len(missing_dongs)} -> {sorted(missing_dongs.tolist())}")
+overall_na = int(df.isna().sum().sum())
+p(f"- 전체 결측치: {overall_na:,}건 (이전 버전에서 있던 gu_name/생활인구 결측이 파이프라인에서 대체값으로 채워짐)")
+
+if 'population_is_proxied' in df.columns:
+    proxied = df['population_is_proxied'].astype(bool)
+    proxied_dongs = df.loc[proxied, 'dong_code'].unique()
+    p(f"\n- population_is_proxied=True 행: {proxied.sum():,}건 ({proxied.mean() * 100:.2f}%)")
+    p(f"- 대상 dong_code 수: {len(proxied_dongs)} -> {sorted(proxied_dongs.tolist())}")
+    rate_by_proxy = df.groupby(proxied)[TARGET].mean().rename('폐업률').to_frame()
+    rate_by_proxy.index = rate_by_proxy.index.map({False: 'proxied=False', True: 'proxied=True'})
+    h("population_is_proxied별 폐업률", level=3)
+    p(tbl(rate_by_proxy))
 
 dist_missing = df['nearest_same_industry_distance_m'].isna()
 p(f"\n- nearest_same_industry_distance_m 결측 행: {dist_missing.sum():,}건 ({dist_missing.mean() * 100:.2f}%)")
-p("  (동일업종 매장이 해당 스냅샷에서 자기 자신뿐인 경우와 일치하는지 same_industry_count_300m<=1 비교)")
-match_check = (df.loc[dist_missing, 'same_industry_count_300m'] <= 1).mean()
-p(f"  -> 결측 행 중 same_industry_count_300m<=1 비율: {match_check * 100:.2f}%")
+if dist_missing.sum() > 0:
+    p("  (동일업종 매장이 해당 스냅샷에서 자기 자신뿐인 경우와 일치하는지 same_industry_count_300m<=1 비교)")
+    match_check = (df.loc[dist_missing, 'same_industry_count_300m'] <= 1).mean()
+    p(f"  -> 결측 행 중 same_industry_count_300m<=1 비율: {match_check * 100:.2f}%")
 
 with open(REPORT_PATH, 'w', encoding='utf-8') as f:
     f.write('\n'.join(report))

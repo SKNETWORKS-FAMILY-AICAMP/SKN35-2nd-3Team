@@ -2,26 +2,28 @@
 preprocessing_dataset_pmh/preprocess_output/preprocess_modeling_dataset_pmh.py
 
 data/features/modeling_dataset.csv(EDA 완료본)를 모델 학습에 바로 넣을 수 있는
-형태로 정리한다. data/raw, data/features의 원본 파일은 전혀 수정하지 않고,
-새 파일(modeling_dataset_preprocessed_pmh.csv)로만 결과를 저장한다.
+형태로 정리한다. data/raw, data/features의 원본 파일은 전혀 읽지도/수정하지도
+않는다 — v2(2026-08-26)부터 gu_name/생활인구 결측이 파이프라인 쪽에서
+population_is_proxied 플래그 + 대체값으로 이미 해소되어 data/raw 조회가
+필요 없어졌다. 새 파일(modeling_dataset_preprocessed_pmh.csv)로만 결과를 저장한다.
+
+v2 변경 사항 (이전 버전 대비):
+  - 원본에 새 컬럼 population_is_proxied(bool)가 추가되고 gu_name/생활인구
+    6개 컬럼의 결측(1.6%)이 전부 대체값으로 채워져 들어옴 -> data/raw에서
+    dong_code -> gu_name을 조회해 복구하던 로직, gu_name 그룹 중앙값으로
+    생활인구를 채우던 로직을 모두 제거. 대신 population_is_proxied를 다른
+    bool 컬럼과 함께 0/1 정수로만 변환한다.
+  - 이 변경으로 이 스크립트는 data/features/modeling_dataset.csv 한 파일만
+    읽으며, data/raw는 아예 열지 않는다.
 
 처리 내용:
-  1. gu_name 결측 복구
-     - build_population_features.py가 seoul_202606.csv 한 스냅샷에서만
-       dong_code -> gu_name 매핑을 만들어서 놓친 경우다. 실제로는 결측 dong_code
-       전부 다른 5개 스냅샷 중 한 곳에는 존재해서(행정구역 개편/오탈자로 최신
-       스냅샷에서만 빠짐), data/raw의 6개 스냅샷 전체에서 매핑을 만들면
-       읽기 전용 조회만으로 전부 복구된다.
-  2. 생활인구 6개 컬럼 결측 대체
-     - 이 결측은 population_features.csv 자체에 없는 행정동이라 원본에서 복구 불가.
-       gu_name 복구 후, 같은 gu_name 안의 중앙값으로 대체한다(전체 중앙값보다
-       지역 편차를 덜 왜곡함). tourist_zone_candidate는 이진 플래그라 최빈값(False)으로 채운다.
-  3. nearest_same_industry_distance_m 결측 방어적 처리
+  1. nearest_same_industry_distance_m 결측 방어적 처리
      - 이 값은 "해당 스냅샷에서 동일업종 매장이 자기 자신뿐"일 때만 결측이며,
        이번 데이터에는 결측이 0건이지만 향후 파이프라인 재실행 시 재발할 수 있어
        "근처에 동일업종이 없다"는 의미로 큰 상수(9999.0)를 채워 넣는다.
-  4. bool 컬럼(transitioned_next, tourist_zone_candidate)을 0/1 정수로 변환
-  5. 카디널리티가 있는 범주형 9개(industry_dae_code/group/jung_code/jung_name/
+  2. bool 컬럼(transitioned_next, tourist_zone_candidate, population_is_proxied)을
+     0/1 정수로 변환
+  3. 카디널리티가 있는 범주형 9개(industry_dae_code/group/jung_code/jung_name/
      code/name, gu_name, dong_code, floor_category)를 정수 라벨로 인코딩해 `_enc`
      컬럼으로 추가한다(원본 문자열 컬럼은 그대로 유지). 매핑은 encoders_pmh.json에
      저장해서 앱 서빙 단계에서도 동일한 인코딩을 재사용할 수 있게 한다.
@@ -34,7 +36,7 @@ data/features/modeling_dataset.csv(EDA 완료본)를 모델 학습에 바로 넣
   - industry_historical_rate 등 fold-safe 타겟 인코딩 컬럼은 build_modeling_dataset.py에서
     이미 fold별로 누수 없이 계산되어 있어 그대로 둔다.
 
-입력: data/features/modeling_dataset.csv, data/raw/seoul_*.csv (gu_name 조회용, 읽기 전용)
+입력: data/features/modeling_dataset.csv (읽기 전용, data/raw는 읽지 않음)
 출력: data/processed/modeling_dataset_preprocessed_pmh.csv
       src/project_2nd/preprocessing_dataset_pmh/preprocess_output/encoders_pmh.json
       src/project_2nd/preprocessing_dataset_pmh/preprocess_output/preprocess_report_pmh.md
@@ -45,17 +47,12 @@ import json
 import os
 
 SRC = 'data/features/modeling_dataset.csv'
-RAW_DIR = 'data/raw'
 DEST = 'data/processed/modeling_dataset_preprocessed_pmh.csv'
 OUTPUT_DIR = 'src/project_2nd/preprocessing_dataset_pmh/preprocess_output'
 ENCODERS_PATH = f'{OUTPUT_DIR}/encoders_pmh.json'
 REPORT_PATH = f'{OUTPUT_DIR}/preprocess_report_pmh.md'
 
-RAW_SNAPSHOTS = ['seoul_202312', 'seoul_202406', 'seoul_202412',
-                  'seoul_202506', 'seoul_202512', 'seoul_202606']
-
-POP_NUMERIC_COLS = ['korean_pop', 'foreign_long_pop', 'foreign_short_pop',
-                     'total_pop_avg', 'foreign_short_ratio']
+BOOL_COLS = ['transitioned_next', 'tourist_zone_candidate', 'population_is_proxied']
 CATEGORICAL_COLS = ['industry_dae_code', 'industry_group', 'industry_jung_code',
                      'industry_jung_name', 'industry_code', 'industry_name',
                      'gu_name', 'dong_code', 'floor_category']
@@ -83,72 +80,46 @@ print(f"loaded: {n_before:,} rows x {n_before_cols} cols")
 
 h("modeling_dataset.csv 전처리 리포트 (pmh)", level=1)
 p(f"- 입력 행 수: {n_before:,}")
+p("- data/raw는 읽지 않음 (원본에 gu_name/생활인구 결측이 이미 없어 조회 불필요)")
 
 # ---------------------------------------------------------------
-# 1. gu_name 결측 복구 (data/raw 6개 스냅샷 전체에서 dong_code -> gu_name 매핑)
+# 1. 원본 결측치 현황
 # ---------------------------------------------------------------
-h("1. gu_name 결측 복구")
+h("1. 원본 결측치 현황")
 
-gu_before = df['gu_name'].isna().sum()
-dong_gu_maps = []
-for snap in RAW_SNAPSHOTS:
-    raw = pd.read_csv(f'{RAW_DIR}/{snap}.csv', usecols=['행정동코드', '시군구명'], dtype=str)
-    dong_gu_maps.append(raw.drop_duplicates(subset=['행정동코드']))
-dong_to_gu = (pd.concat(dong_gu_maps)
-              .drop_duplicates(subset=['행정동코드'])
-              .set_index('행정동코드')['시군구명'])
+na_total = int(df.isna().sum().sum())
+p(f"- 전체 결측치: {na_total:,}건")
+if na_total > 0:
+    na_cols = df.isna().sum()
+    na_cols = na_cols[na_cols > 0]
+    p(na_cols.to_string())
 
-missing_mask = df['gu_name'].isna()
-df.loc[missing_mask, 'gu_name'] = df.loc[missing_mask, 'dong_code'].map(dong_to_gu)
-gu_after = df['gu_name'].isna().sum()
-
-p(f"- 복구 전 gu_name 결측: {gu_before:,}행")
-p(f"- 복구 후 gu_name 결측: {gu_after:,}행 (data/raw 6개 스냅샷 전체 조회로 복구, data/raw는 읽기만 함)")
-if gu_after > 0:
-    still_missing_dongs = sorted(df.loc[df['gu_name'].isna(), 'dong_code'].unique().tolist())
-    df['gu_name'] = df['gu_name'].fillna('UNKNOWN')
-    p(f"- data/raw에서도 못 찾은 dong_code {len(still_missing_dongs)}개는 'UNKNOWN'으로 채움: {still_missing_dongs}")
+if 'population_is_proxied' in df.columns:
+    proxied_ratio = df['population_is_proxied'].astype(bool).mean() * 100
+    p(f"- population_is_proxied=True 비율: {proxied_ratio:.2f}% (생활인구가 대체값으로 채워진 행, 원본 파이프라인 단계에서 이미 처리됨)")
 
 # ---------------------------------------------------------------
-# 2. 생활인구 6개 컬럼 결측 대체 (gu_name 그룹 중앙값)
+# 2. nearest_same_industry_distance_m 방어적 결측 처리
 # ---------------------------------------------------------------
-h("2. 생활인구 결측 대체")
-
-pop_missing_before = df[POP_NUMERIC_COLS].isna().any(axis=1).sum()
-gu_median = df.groupby('gu_name')[POP_NUMERIC_COLS].transform('median')
-for col in POP_NUMERIC_COLS:
-    df[col] = df[col].fillna(gu_median[col])
-    df[col] = df[col].fillna(df[col].median())  # 그룹 내 전체 결측인 극단적 경우 대비
-
-df['tourist_zone_candidate'] = df['tourist_zone_candidate'].map({'True': True, 'False': False, True: True, False: False})
-tourist_missing = df['tourist_zone_candidate'].isna().sum()
-df['tourist_zone_candidate'] = df['tourist_zone_candidate'].fillna(False)
-
-p(f"- 생활인구 5개 수치 컬럼 결측(대체 전): {pop_missing_before:,}행 -> gu_name 그룹 중앙값으로 대체")
-p(f"- tourist_zone_candidate 결측(대체 전): {tourist_missing:,}행 -> False(최빈값)로 대체")
-
-# ---------------------------------------------------------------
-# 3. nearest_same_industry_distance_m 방어적 결측 처리
-# ---------------------------------------------------------------
-h("3. nearest_same_industry_distance_m 결측 처리")
+h("2. nearest_same_industry_distance_m 결측 처리")
 
 dist_missing = df['nearest_same_industry_distance_m'].isna().sum()
 df['nearest_same_industry_distance_m'] = df['nearest_same_industry_distance_m'].fillna(DIST_FILL_VALUE)
 p(f"- 결측 {dist_missing:,}행을 {DIST_FILL_VALUE}(동일업종 없음을 의미하는 상수)로 대체")
 
 # ---------------------------------------------------------------
-# 4. bool 컬럼 -> 0/1 정수
+# 3. bool 컬럼 -> 0/1 정수
 # ---------------------------------------------------------------
-h("4. bool 컬럼 정수 변환")
+h("3. bool 컬럼 정수 변환")
 
-df['transitioned_next'] = df['transitioned_next'].map({'True': 1, 'False': 0, True: 1, False: 0}).astype(int)
-df['tourist_zone_candidate'] = df['tourist_zone_candidate'].astype(int)
-p("- transitioned_next, tourist_zone_candidate -> 0/1 정수로 변환")
+for col in BOOL_COLS:
+    df[col] = df[col].map({'True': 1, 'False': 0, True: 1, False: 0}).astype(int)
+p(f"- {', '.join(BOOL_COLS)} -> 0/1 정수로 변환")
 
 # ---------------------------------------------------------------
-# 5. 범주형 라벨 인코딩 (_enc 컬럼 추가, 매핑은 encoders_pmh.json에 저장)
+# 4. 범주형 라벨 인코딩 (_enc 컬럼 추가, 매핑은 encoders_pmh.json에 저장)
 # ---------------------------------------------------------------
-h("5. 범주형 라벨 인코딩")
+h("4. 범주형 라벨 인코딩")
 
 encoders = {}
 for col in CATEGORICAL_COLS:

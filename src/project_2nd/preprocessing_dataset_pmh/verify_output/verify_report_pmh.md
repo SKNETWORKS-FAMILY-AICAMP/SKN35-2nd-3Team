@@ -1,8 +1,8 @@
 
 # modeling_dataset_preprocessed_pmh.csv 검증 리포트
 
-- 원본(modeling_dataset.csv): 1,889,582행 x 33열
-- 전처리 결과(modeling_dataset_preprocessed_pmh.csv): 1,889,582행 x 42열
+- 원본(modeling_dataset.csv): 1,889,582행 x 34열
+- 전처리 결과(modeling_dataset_preprocessed_pmh.csv): 1,889,582행 x 43열
 
 ## 1. 기본 형태
 
