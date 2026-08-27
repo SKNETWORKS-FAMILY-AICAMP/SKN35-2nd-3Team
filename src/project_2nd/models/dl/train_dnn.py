@@ -48,7 +48,7 @@ from deep_mlp import DeepMLP, ModelConfig, set_global_seed
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_DATA_DIR = REPO_ROOT / "data" / "processed" / "dnn_pmh_time_safe"
+DEFAULT_DATA_DIR = REPO_ROOT / "data" / "processed" / "dnn_pjw_official"
 DEFAULT_RUNS_DIR = Path(__file__).resolve().parent / "saved" / "runs"
 MAX_ALLOWED_EPOCHS = 7
 
