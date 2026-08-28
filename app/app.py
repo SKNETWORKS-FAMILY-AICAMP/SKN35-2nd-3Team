@@ -69,6 +69,17 @@ def _wilson_lower_bound(p: float, n: int, z: float = 1.96) -> float:
     margin = z * math.sqrt((p * (1 - p) + z**2 / (4 * n)) / n)
     return max(0.0, (center - margin) / denom)
 
+def _rank_and_total_desc(value: float, all_values: list[float]) -> tuple[int, int] | tuple[None, None]:
+    """값이 클수록 좋은 지표에서 몇 등인지(1등이 최고)와 전체 개수를 반환.
+    "상위 86%"보다 "423개 동 중 364위"가 기저 폐업률 10.6%로 점수가 다 몰려있는
+    상황(2026-08-28 지적: 평균 대비 점수차가 작아 극적으로 안 느껴짐)에서 순위
+    차이를 더 직관적으로 전달한다."""
+    if not all_values:
+        return None, None
+    total = len(all_values)
+    rank = sum(1 for v in all_values if v > value) + 1
+    return rank, total
+
 # ---------------------------------------------------------------
 # 데이터 조회 (읽기 전용, 전부 st.cache_data로 캐싱 — DB 부하 방지)
 # ---------------------------------------------------------------
@@ -840,8 +851,9 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
     pred = _latest_owner_prediction(user["store_id"])
     if pred:
         score = ui.proba_to_survival_score(float(pred["score"]))
-        # 동 평균 대비 비교(2026-08-28 추가) — GUEST 지도용으로 이미 캐싱된
-        # _dong_survival_proxy를 재사용, DB를 더 안 때림.
+        # 동 평균/전체 분포 대비 비교(2026-08-28 추가) — GUEST 지도용으로 이미
+        # 캐싱된 _dong_survival_proxy를 재사용, DB를 더 안 때림.
+        dong_scores = [p["survival_rate"] * 100 for p in _dong_survival_proxy()]
         dong_avg = next(
             (p["survival_rate"] * 100 for p in _dong_survival_proxy() if p["dong_code"] == snapshot["dong_code"]),
             None,
@@ -857,9 +869,13 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
                 for f in feats
             ]
         ui.score_card("내 업종 생존점수", score, shap_lines=shap_lines)
-        if dong_avg is not None:
-            diff = score - dong_avg
-            st.caption(f"우리 동네 평균({dong_avg:.0f}점) 대비 {'+' if diff >= 0 else ''}{diff:.0f}점")
+
+        # 기저 폐업률이 10.6%로 낮아 절대 점수가 구조적으로 80~95점대에 몰리는
+        # 문제(2026-08-28 지적) — ui-logic.md 3-2에서 정해둔 "절대 점수보다 상대
+        # 순위 병기" 방향을 반영해 서울 전체 동 분포 대비 퍼센타일을 같이 보여줌.
+        rank, total = _rank_and_total_desc(score, dong_scores)
+        if rank is not None:
+            st.caption(f"서울 {total}개 동 중 {rank}위")
     else:
         # 모델이 아직 앱에 연동되지 않아 predictions가 비어있는 동안은 안내 문구 없이
         # 공란으로 둔다(2026-08-28 사용자 요청: "shap이나 모델 데이터로 못하는건
@@ -908,12 +924,11 @@ def _render_region_detail_panel(clicked: dict):
         score = round(match["survival_rate"] * 100)
         ui.grade_badge(score)
         ui.confidence_notice()
-        # 서울 전체 평균 대비 비교(2026-08-28 추가) — "지금 뜨는 동네" 패널과
-        # 동일한 기준선(_citywide_survival_avg) 재사용.
-        citywide_avg = _citywide_survival_avg()
-        if citywide_avg is not None:
-            diff = score - citywide_avg
-            st.caption(f"서울 평균({citywide_avg:.0f}점) 대비 {'+' if diff >= 0 else ''}{diff:.0f}점")
+
+        all_dong_scores = [p["survival_rate"] * 100 for p in _dong_survival_proxy()]
+        rank, total = _rank_and_total_desc(score, all_dong_scores)
+        if rank is not None:
+            st.caption(f"서울 {total}개 동 중 {rank}위")
 
     # 유동인구 — 평균 한 줄이 아니라 내국인/장기·단기체류 외국인 구성을 나눠서
     # 보여주고(2026-08-28, "너무 아쉽네 살짝 더 잘 보여질 수 있을거 같은데" 피드백),
