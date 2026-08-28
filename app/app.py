@@ -51,6 +51,8 @@ from streamlit_folium import st_folium
 from shared import auth
 from shared import components as ui
 from shared.db import get_engine
+from shared.write_dong_view import increment_dong_view
+from shared.write_user_view import increment_user_view
 
 st.set_page_config(page_title="서울 상권 폐업예측", layout="wide")
 
@@ -137,7 +139,10 @@ def _industry_options() -> list[tuple[str, str]]:
 def _top_dongs_for_industry(industry_code: str, top_n: int = 3) -> list[dict]:
     """특정 업종 기준 동별 실측 생존율 랭킹 — 모델 연동 전 임시 대체값
     (_dong_survival_proxy와 동일한 패턴: store_snapshots.is_closed_next 실측 평균).
-    표본 5건 미만인 동은 노이즈가 커서 제외."""
+    survival_rate 원값으로 정렬하면 표본 5~8건짜리가 우연히 100%를 찍고 나란히
+    1~3위를 차지하는 문제(2026-08-28 지적, 예: "기타 서양식 음식점" 8곳/5곳/7곳
+    전부 100점) — 업종전환 추천과 동일하게 Wilson 하한으로 정렬해서 표본이
+    적을수록 점수를 보수적으로 깎는다. 최소 표본도 5 -> 10으로 올림."""
     engine = get_engine()
     if engine is None:
         return []
@@ -148,23 +153,30 @@ def _top_dongs_for_industry(industry_code: str, top_n: int = 3) -> list[dict]:
         FROM store_snapshots
         WHERE industry_code = :industry_code
         GROUP BY dong_code
-        HAVING n >= 5
-        ORDER BY survival_rate DESC
-        LIMIT :top_n
+        HAVING n >= 10
         """
     )
     with engine.connect() as conn:
-        rows = conn.execute(sql, {"industry_code": industry_code, "top_n": top_n}).mappings().all()
+        rows = conn.execute(sql, {"industry_code": industry_code}).mappings().all()
     names = _dong_name_map()
-    return [
-        {
-            "dong_code": r["dong_code"],
-            "dong_name": names.get(r["dong_code"], r["dong_code"]),
-            "n": float(r["n"]),
-            "survival_rate": float(r["survival_rate"]),
-        }
-        for r in rows
-    ]
+
+    scored = []
+    for r in rows:
+        n = float(r["n"])
+        survival_rate = float(r["survival_rate"])
+        wilson_score = _wilson_lower_bound(survival_rate, int(n))
+        scored.append(
+            {
+                "dong_code": r["dong_code"],
+                "dong_name": names.get(r["dong_code"], r["dong_code"]),
+                "n": n,
+                "survival_rate": survival_rate,
+                "wilson_score": wilson_score,
+                "low_confidence": n < 30,
+            }
+        )
+    scored.sort(key=lambda x: x["wilson_score"], reverse=True)
+    return scored[:top_n]
 
 
 @st.cache_data(ttl=3600)
@@ -306,14 +318,22 @@ def _hot_dong_ranking(top_n: int = 5) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(sql, {"cutoff": cutoff}).mappings().all()
 
-        names = _dong_name_map()
-        scored = []
-        for r in rows:
-            total_stores = float(r["total_stores"])
-            new_stores = float(r["new_stores"])
-            closed_stores = float(r["closed_stores"])
-            new_ratio = new_stores / total_stores
-            survival_ratio = 1 - (closed_stores / total_stores)
+    # "신규매장은 많은데 그만큼 빨리 망하는" 동이 단순평균 때문에 1위로 뽑히는
+    # 문제(2026-08-28 지적, 예: 응암2동 신규매장 9%로 1위인데 생존율은 서울
+    # 평균보다 23%p 낮음) — 서울 평균 생존율보다 낮은 동은 "뜨는 동네" 후보에서
+    # 아예 제외한다. "뜨는 동네"는 성장과 안정이 같이 있어야 의미가 있다는 판단.
+    citywide_avg_ratio = (_citywide_survival_avg() or 0) / 100
+
+    names = _dong_name_map()
+    scored = []
+    for r in rows:
+        total_stores = float(r["total_stores"])
+        new_stores = float(r["new_stores"])
+        closed_stores = float(r["closed_stores"])
+        new_ratio = new_stores / total_stores
+        survival_ratio = 1 - (closed_stores / total_stores)
+        if survival_ratio < citywide_avg_ratio:
+            continue
         # growth_slope는 아직 빠져있음(모듈 docstring 참고) — 두 지표 단순 평균.
         hot_index = (new_ratio + survival_ratio) / 2
         scored.append(
@@ -322,8 +342,8 @@ def _hot_dong_ranking(top_n: int = 5) -> list[dict]:
                 "dong_name": names.get(r["dong_code"], r["dong_code"]),
                 "new_ratio": new_ratio,
                 "survival_ratio": survival_ratio,
-                "total_stores": r["total_stores"],
-                "new_stores": r["new_stores"],
+                "total_stores": total_stores,
+                "new_stores": new_stores,
                 "hot_index": hot_index,
             }
         )
@@ -739,7 +759,7 @@ def _render_hot_dong_panel():
     else:
         for i, r in enumerate(ranking):
             caption = (
-                f"총 {r['total_stores']}곳 중 최근 3개월 신규 {r['new_stores']}곳 "
+                f"총 {r['total_stores']:.0f}곳 중 최근 3개월 신규 {r['new_stores']:.0f}곳 "
                 f"· 생존율 {r['survival_ratio'] * 100:.0f}%"
             )
             if citywide_avg is not None:
@@ -803,11 +823,14 @@ def _render_new_member_panel():
             st.caption("이 업종은 아직 데이터가 부족해요.")
         else:
             for i, d in enumerate(top_dongs):
+                caption = f"{labels[idx]} 매장 {d['n']:.0f}곳 기준"
+                if d["low_confidence"]:
+                    caption = f"⚠️ {caption} — 표본 적어 참고만"
                 _rank_card(
                     badge=_RANK_BADGES[i],
                     title=d["dong_name"],
-                    pill_text=f"{d['survival_rate'] * 100:.0f}점",
-                    caption=f"{labels[idx]} 매장 {d['n']:.0f}곳 기준",
+                    pill_text=f"{d['wilson_score'] * 100:.0f}점",
+                    caption=caption,
                 )
 
     st.divider()
@@ -1052,6 +1075,15 @@ def main():
         map_state = st_folium(fmap, height=map_height, width=_MAP_WIDTH, key="main_map")
         if mode != "OWNER" and map_state and map_state.get("last_clicked"):
             st.session_state["region_click"] = map_state["last_clicked"]
+            # 지도 클릭(지역상세 조회) 카운팅 — 두 헬퍼 모두 게스트/필수값 없으면
+            # 조용히 무시하도록 이미 구현돼 있어서(write_dong_view.py/write_user_view.py
+            # 참고), 호출부에서 별도 로그인 체크 없이 그냥 호출하면 됨.
+            clicked_dong = _nearest_dong(
+                map_state["last_clicked"]["lat"], map_state["last_clicked"]["lng"]
+            )
+            if clicked_dong:
+                increment_dong_view(clicked_dong, user["user_type"] if user else None)
+                increment_user_view(user["user_id"] if user else None, clicked_dong)
             st.rerun()
 
     with col_panel:
