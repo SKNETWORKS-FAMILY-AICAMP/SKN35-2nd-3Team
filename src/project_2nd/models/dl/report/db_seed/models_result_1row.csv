@@ -1,0 +1,2 @@
+﻿model_id,model_name,version,model_type,accuracy,precision_score,recall_score,f1_score,roc_auc,trained_at,is_production
+DNN_20260828_094006_7e84a4a_pjw_official,PJW DNN 34F E100 P5,2026.08.28-e100p5,DL,0.88525,0.44918,0.35856,0.39878,0.74577,2026-08-28 09:40:06,0
