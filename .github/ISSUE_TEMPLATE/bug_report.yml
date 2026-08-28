@@ -1,0 +1,58 @@
+name: 버그 보고
+description: 재현 가능한 결함을 기록합니다.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: build
+    attributes:
+      label: 버전·리비전과 URL
+      description: ProductVersion, 전체 GitCommit, SpecRevision, ArtifactSHA256과 테스트한 공개 URL을 적어주세요.
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 환경
+      description: 테스트한 환경을 선택해 주세요.
+      options:
+        - Browser
+        - AOS
+        - iOS
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 단계
+      placeholder: "1. 게임에 접속한다\n2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 결과
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 결과
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 우선순위
+      options:
+        - P0 심각
+        - P1 중요
+        - P2 보통
+        - P3 사소
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 증거와 추가 정보
+      description: 재현 빈도, 스크린샷, 영상, 콘솔 오류와 우회 방법을 적어주세요.
