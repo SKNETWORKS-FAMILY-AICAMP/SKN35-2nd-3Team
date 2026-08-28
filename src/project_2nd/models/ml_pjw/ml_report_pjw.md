@@ -93,5 +93,6 @@ minha님의 `compare_lgbm_catboost_pmh.py`와 동일한 31개 피처(원본 34�
 - `compare_output/tune_xgb_extratrees_pmh.py` / `tune_xgb_extratrees_report_pmh.md` — Optuna 튜닝 + 1-split 최종
 - `compare_output/finalize_extratrees_5fold_pmh.py` / `finalize_extratrees_5fold_report_pmh.md` — 5-fold 재검증(최종 확정)
 - `compare_output/build_results_json_pmh.py` / `compare_output/ml_results_summary_pmh.json` — 전체 결과 팀 공유용 JSON
-- `shap_output/build_final_model_and_shap_pmh.py` / `shap_output/shap_feature_importance_pmh.json` / `shap_output/shap_top_features_examples_pmh.json` — SHAP 분석 + 최종 모델 저장
+- `shap_output/build_final_model_and_shap_pmh.py` — SHAP 분석 + 최종 모델 저장 스크립트
 - `../shap/explain_prediction.py` — 팀 공용 SHAP 설명 함수(재사용 가능)
+- `../shap/shap_feature_importance_pmh.json` / `../shap/shap_top_features_examples_pmh.json` — SHAP 분석 결과(팀 공용 폴더에 위치)

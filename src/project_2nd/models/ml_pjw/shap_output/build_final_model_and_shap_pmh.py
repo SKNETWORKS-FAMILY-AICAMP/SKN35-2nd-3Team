@@ -31,9 +31,10 @@ from explain_prediction import compute_shap_matrix, format_shap_row  # noqa: E40
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SRC = REPO_ROOT / "data" / "processed" / "modeling_dataset_preprocessed_pmh.csv"
-OUT_DIR = Path(__file__).resolve().parent
-SAVED_DIR = OUT_DIR.parent / "saved"
+SAVED_DIR = Path(__file__).resolve().parent.parent / "saved"
 SAVED_DIR.mkdir(exist_ok=True)
+# 결과 JSON은 팀 공용 폴더(models/shap/)에 저장 - explain_prediction.py와 같은 위치
+OUT_DIR = Path(__file__).resolve().parents[2] / "shap"
 
 NON_FEATURE = {"store_id", "fold", "is_closed_next"}
 TARGET = "is_closed_next"

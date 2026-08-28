@@ -132,7 +132,7 @@ result = {
             "f1": 0.4051, "roc_auc": 0.7486, "pr_auc": 0.4123,
         },
         "trained_on": "fold in [0,1,2,3] (train+validation), tested on fold 4",
-        "shap_feature_importance": "models/ml_pjw/shap_output/shap_feature_importance_pmh.json",
+        "shap_feature_importance": "models/shap/shap_feature_importance_pmh.json",
     },
 }
 
