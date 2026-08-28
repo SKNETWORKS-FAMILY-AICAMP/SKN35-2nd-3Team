@@ -33,6 +33,9 @@ def main():
     ap.add_argument("--n-samples", type=int, default=50)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default="data/features/predictions_for_db_pmh_ml_pjw.json")
+    ap.add_argument("--snapshot-date", default=None,
+                     help="이 시점 데이터로만 예측 (기본: 데이터 내 최신 스냅샷, "
+                          "DL팀 shap_explain_tm.py와 동일한 관례 - df['snapshot_date'].max())")
     args = ap.parse_args()
 
     print("모델 불러오는 중 ...")
@@ -60,7 +63,15 @@ def main():
         if enc_col in df_et.columns and c in feature_cols:
             df_et[c] = df_et[enc_col]
 
-    test = df_et[df_et["fold"] == 4]
+    # 최신 실제 스냅샷만 사용 - 임의 과거 시점 섞지 않고 "지금 시점 기준 위험도"를
+    # 보여주는 데모이므로 최신 데이터로만 뽑는다. build_modeling_dataset.py가
+    # label_available=False인 마지막 원본 스냅샷(서빙 전용)은 이미 걸러내므로,
+    # 이 데이터 안에서의 max()가 곧 최신 "라벨 있는" 스냅샷(2026-08-28 기준 202512,
+    # 2025년 12월)이다 - DL팀 shap_explain_tm.py와 동일한 관례.
+    target_snapshot = args.snapshot_date or df_et["snapshot_date"].astype(str).max()
+    print(f"사용 스냅샷: {target_snapshot}")
+    # (fold==4는 학습에 안 쓰인 test 구간 유지 - 방법론 일관성)
+    test = df_et[(df_et["fold"] == 4) & (df_et["snapshot_date"].astype(str) == target_snapshot)]
     sample_idx = test.sample(n=args.n_samples, random_state=args.seed).index
     sample = test.loc[sample_idx].reset_index(drop=True)
     sample_raw = df.loc[sample_idx].reset_index(drop=True)  # industry_code 원본 문자열용
