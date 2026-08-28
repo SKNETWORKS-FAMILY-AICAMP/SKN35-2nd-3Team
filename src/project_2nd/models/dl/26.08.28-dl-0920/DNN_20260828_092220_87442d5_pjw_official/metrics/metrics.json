@@ -1,0 +1,73 @@
+{
+  "primary_metric": "PR-AUC (average precision)",
+  "best_epoch": 7,
+  "best_validation_pr_auc": 0.3801581808735197,
+  "threshold_selected_on": "validation fold 3, maximum F1",
+  "threshold": 0.693678617477417,
+  "risk_score_note": "weighted-BCE sigmoid output; uncalibrated risk score, not calibrated probability",
+  "validation": {
+    "pr_auc": 0.3801581808735197,
+    "roc_auc": 0.7385224991135448,
+    "f1": 0.3784417267575728,
+    "precision": 0.42570879086791985,
+    "recall": 0.3406219751309225,
+    "accuracy": 0.8799427956622707,
+    "brier_score_uncalibrated": 0.1926647126674652,
+    "ece_10bin_uncalibrated": 0.31933858558637873,
+    "precision_at_top_5_percent": 0.5554727030625832,
+    "recall_at_top_5_percent": 0.2588419249956566,
+    "top_5_percent_count": 18775,
+    "precision_at_top_10_percent": 0.3914780292942743,
+    "recall_at_top_10_percent": 0.3648457471891986,
+    "top_10_percent_count": 37550,
+    "threshold": 0.693678617477417,
+    "confusion_matrix": [
+      [
+        316691,
+        18514
+      ],
+      [
+        26567,
+        13724
+      ]
+    ],
+    "support": {
+      "negative_0": 335205,
+      "positive_1": 40291
+    },
+    "loss": 1.0519410353201961,
+    "best_f1_from_threshold_search": 0.37844172675757287
+  },
+  "test": {
+    "pr_auc": 0.37812319043471887,
+    "roc_auc": 0.7376985139702388,
+    "f1": 0.37982853423082785,
+    "precision": 0.4260369737455336,
+    "recall": 0.3426629348260696,
+    "accuracy": 0.8812309520462376,
+    "brier_score_uncalibrated": 0.19275596737861633,
+    "ece_10bin_uncalibrated": 0.32047987319617893,
+    "precision_at_top_5_percent": 0.5506869662086892,
+    "recall_at_top_5_percent": 0.25942123150739704,
+    "top_5_percent_count": 18851,
+    "precision_at_top_10_percent": 0.39073234131720647,
+    "recall_at_top_10_percent": 0.3681277489004398,
+    "top_10_percent_count": 37701,
+    "threshold": 0.693678617477417,
+    "confusion_matrix": [
+      [
+        318520,
+        18473
+      ],
+      [
+        26304,
+        13712
+      ]
+    ],
+    "support": {
+      "negative_0": 336993,
+      "positive_1": 40016
+    },
+    "loss": 1.0473978730934694
+  }
+}

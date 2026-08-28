@@ -1,0 +1,50 @@
+name: 기능/개선 제안
+description: 플레이 경험 또는 개발 품질을 개선할 작업을 제안합니다.
+title: "[Proposal] "
+labels: ["proposal"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 문제 또는 관찰 근거
+      description: 누구에게 어떤 문제가 있고 어떤 플레이테스트 또는 데이터가 이를 보여주는지 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 원하는 결과
+      description: 구현 방식보다 플레이어 또는 팀이 얻어야 할 결과를 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 가장 작은 검증 가능한 제안
+      description: 변경 내용, 검증 방법과 검토한 대안을 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 우선순위 근거
+      options:
+        - 코어 재미
+        - 실행 안정성
+        - 접근성/공개 가능성
+        - 독창성
+        - 연출/콘텐츠
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: 범위와 위험
+      description: 예상 작업 크기, 웹 배포 영향, 외부 의존성과 에셋 권리를 적어주세요.
