@@ -23,7 +23,7 @@ class ModelConfig:
     learning_rate: float = 0.001
     weight_decay: float = 0.0001
     batch_size: int = 4096
-    max_epochs: int = 7
+    max_epochs: int = 100
     early_stopping_patience: int = 5
     seed: int = 42
 

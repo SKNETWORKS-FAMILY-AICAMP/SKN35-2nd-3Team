@@ -50,14 +50,15 @@ from deep_mlp import DeepMLP, ModelConfig, set_global_seed
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DATA_DIR = REPO_ROOT / "data" / "processed" / "dnn_pjw_official"
 DEFAULT_RUNS_DIR = Path(__file__).resolve().parent / "saved" / "runs"
-MAX_ALLOWED_EPOCHS = 7
+MAX_ALLOWED_EPOCHS = 100
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CUDA Deep MLP 학습")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
-    parser.add_argument("--max-epochs", type=int, default=7)
+    parser.add_argument("--max-epochs", type=int, default=100)
+    parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -310,6 +311,8 @@ def main() -> None:
     args = parse_args()
     if not 1 <= args.max_epochs <= MAX_ALLOWED_EPOCHS:
         raise ValueError(f"max_epochs는 1~{MAX_ALLOWED_EPOCHS}만 허용됩니다.")
+    if args.early_stopping_patience < 1:
+        raise ValueError("early_stopping_patience는 1 이상이어야 합니다.")
     if args.batch_size < 2:
         raise ValueError("BatchNorm 학습을 위해 batch_size는 2 이상이어야 합니다.")
 
@@ -360,6 +363,7 @@ def main() -> None:
     config = ModelConfig(
         batch_size=args.batch_size,
         max_epochs=args.max_epochs,
+        early_stopping_patience=args.early_stopping_patience,
         seed=args.seed,
     )
 
@@ -390,7 +394,10 @@ def main() -> None:
     )
     log(f"입력 피처 수: {features.shape[1]}")
     log(f"pos_weight: {pos_weight_value:.6f}")
-    log(f"max epochs={config.max_epochs}, seed={config.seed}, batch={config.batch_size}")
+    log(
+        f"max epochs={config.max_epochs}, patience={config.early_stopping_patience}, "
+        f"seed={config.seed}, batch={config.batch_size}"
+    )
 
     train_loader = make_loader(
         features, labels, train_indices, config.batch_size, True, config.seed, args.num_workers

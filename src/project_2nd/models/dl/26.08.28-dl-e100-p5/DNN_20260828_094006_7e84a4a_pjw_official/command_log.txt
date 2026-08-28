@@ -1,0 +1,97 @@
+RUN_ID: DNN_20260828_094006_7e84a4a_pjw_official
+장치: cuda:0 (NVIDIA GeForce RTX 3070)
+분할: train=1,137,077, validation=375,496, test=377,009
+입력 피처 수: 34
+pos_weight: 8.404714
+max epochs=100, patience=5, seed=42, batch=4096
+Epoch 1/100 | train_loss=1.118474 | val_loss=1.087246 | val_PR-AUC=0.324621 | val_ROC-AUC=0.722017
+Epoch 2/100 | train_loss=1.088721 | val_loss=1.075261 | val_PR-AUC=0.339155 | val_ROC-AUC=0.727387
+Epoch 3/100 | train_loss=1.076769 | val_loss=1.065874 | val_PR-AUC=0.355416 | val_ROC-AUC=0.732181
+Epoch 4/100 | train_loss=1.068588 | val_loss=1.060228 | val_PR-AUC=0.366629 | val_ROC-AUC=0.735093
+Epoch 5/100 | train_loss=1.064235 | val_loss=1.056985 | val_PR-AUC=0.371848 | val_ROC-AUC=0.736340
+Epoch 6/100 | train_loss=1.059558 | val_loss=1.053810 | val_PR-AUC=0.376523 | val_ROC-AUC=0.737743
+Epoch 7/100 | train_loss=1.057309 | val_loss=1.051941 | val_PR-AUC=0.380158 | val_ROC-AUC=0.738522
+Epoch 8/100 | train_loss=1.054806 | val_loss=1.050212 | val_PR-AUC=0.381755 | val_ROC-AUC=0.739022
+Epoch 9/100 | train_loss=1.052628 | val_loss=1.048482 | val_PR-AUC=0.383846 | val_ROC-AUC=0.740048
+Epoch 10/100 | train_loss=1.050906 | val_loss=1.046660 | val_PR-AUC=0.387737 | val_ROC-AUC=0.740866
+Epoch 11/100 | train_loss=1.049113 | val_loss=1.045701 | val_PR-AUC=0.388774 | val_ROC-AUC=0.741414
+Epoch 12/100 | train_loss=1.048354 | val_loss=1.045262 | val_PR-AUC=0.390143 | val_ROC-AUC=0.741447
+Epoch 13/100 | train_loss=1.046323 | val_loss=1.044184 | val_PR-AUC=0.391343 | val_ROC-AUC=0.742101
+Epoch 14/100 | train_loss=1.046202 | val_loss=1.043565 | val_PR-AUC=0.392585 | val_ROC-AUC=0.742260
+Epoch 15/100 | train_loss=1.045044 | val_loss=1.043047 | val_PR-AUC=0.393319 | val_ROC-AUC=0.743168
+Epoch 16/100 | train_loss=1.043752 | val_loss=1.041958 | val_PR-AUC=0.395148 | val_ROC-AUC=0.743269
+Epoch 17/100 | train_loss=1.043301 | val_loss=1.041685 | val_PR-AUC=0.395431 | val_ROC-AUC=0.743426
+Epoch 18/100 | train_loss=1.042294 | val_loss=1.041313 | val_PR-AUC=0.396016 | val_ROC-AUC=0.743474
+Epoch 19/100 | train_loss=1.042567 | val_loss=1.041103 | val_PR-AUC=0.397030 | val_ROC-AUC=0.743706
+Epoch 20/100 | train_loss=1.041406 | val_loss=1.039874 | val_PR-AUC=0.398533 | val_ROC-AUC=0.744357
+Epoch 21/100 | train_loss=1.041006 | val_loss=1.040512 | val_PR-AUC=0.398193 | val_ROC-AUC=0.743817
+Epoch 22/100 | train_loss=1.039755 | val_loss=1.039776 | val_PR-AUC=0.398241 | val_ROC-AUC=0.744159
+Epoch 23/100 | train_loss=1.039674 | val_loss=1.039584 | val_PR-AUC=0.399295 | val_ROC-AUC=0.744281
+Epoch 24/100 | train_loss=1.039260 | val_loss=1.039501 | val_PR-AUC=0.399285 | val_ROC-AUC=0.744435
+Epoch 25/100 | train_loss=1.038561 | val_loss=1.039172 | val_PR-AUC=0.400266 | val_ROC-AUC=0.744459
+Epoch 26/100 | train_loss=1.038825 | val_loss=1.038545 | val_PR-AUC=0.399838 | val_ROC-AUC=0.745025
+Epoch 27/100 | train_loss=1.037735 | val_loss=1.038292 | val_PR-AUC=0.400924 | val_ROC-AUC=0.744958
+Epoch 28/100 | train_loss=1.037475 | val_loss=1.038705 | val_PR-AUC=0.400582 | val_ROC-AUC=0.744916
+Epoch 29/100 | train_loss=1.036786 | val_loss=1.038009 | val_PR-AUC=0.401212 | val_ROC-AUC=0.744899
+Epoch 30/100 | train_loss=1.036802 | val_loss=1.037992 | val_PR-AUC=0.401188 | val_ROC-AUC=0.745106
+Epoch 31/100 | train_loss=1.036706 | val_loss=1.037872 | val_PR-AUC=0.400278 | val_ROC-AUC=0.745336
+Epoch 32/100 | train_loss=1.036097 | val_loss=1.037862 | val_PR-AUC=0.401931 | val_ROC-AUC=0.745361
+Epoch 33/100 | train_loss=1.036146 | val_loss=1.037429 | val_PR-AUC=0.401941 | val_ROC-AUC=0.745482
+Epoch 34/100 | train_loss=1.035778 | val_loss=1.037339 | val_PR-AUC=0.401997 | val_ROC-AUC=0.745500
+Epoch 35/100 | train_loss=1.035321 | val_loss=1.037377 | val_PR-AUC=0.402548 | val_ROC-AUC=0.745261
+Epoch 36/100 | train_loss=1.034652 | val_loss=1.036816 | val_PR-AUC=0.402815 | val_ROC-AUC=0.745520
+Epoch 37/100 | train_loss=1.034367 | val_loss=1.036671 | val_PR-AUC=0.403396 | val_ROC-AUC=0.745890
+Epoch 38/100 | train_loss=1.034565 | val_loss=1.036815 | val_PR-AUC=0.403160 | val_ROC-AUC=0.745563
+Epoch 39/100 | train_loss=1.034049 | val_loss=1.037163 | val_PR-AUC=0.403375 | val_ROC-AUC=0.745430
+Epoch 40/100 | train_loss=1.034159 | val_loss=1.036476 | val_PR-AUC=0.403583 | val_ROC-AUC=0.745762
+Epoch 41/100 | train_loss=1.033733 | val_loss=1.036344 | val_PR-AUC=0.404175 | val_ROC-AUC=0.745759
+Epoch 42/100 | train_loss=1.033234 | val_loss=1.036417 | val_PR-AUC=0.404422 | val_ROC-AUC=0.745974
+Epoch 43/100 | train_loss=1.033688 | val_loss=1.036211 | val_PR-AUC=0.404184 | val_ROC-AUC=0.745871
+Epoch 44/100 | train_loss=1.033104 | val_loss=1.036596 | val_PR-AUC=0.404437 | val_ROC-AUC=0.745840
+Epoch 45/100 | train_loss=1.032395 | val_loss=1.035868 | val_PR-AUC=0.404493 | val_ROC-AUC=0.746113
+Epoch 46/100 | train_loss=1.032645 | val_loss=1.036115 | val_PR-AUC=0.403634 | val_ROC-AUC=0.746074
+Epoch 47/100 | train_loss=1.032711 | val_loss=1.036132 | val_PR-AUC=0.403893 | val_ROC-AUC=0.746111
+Epoch 48/100 | train_loss=1.032433 | val_loss=1.035781 | val_PR-AUC=0.404580 | val_ROC-AUC=0.746175
+Epoch 49/100 | train_loss=1.031726 | val_loss=1.035685 | val_PR-AUC=0.405097 | val_ROC-AUC=0.746157
+Epoch 50/100 | train_loss=1.031847 | val_loss=1.036105 | val_PR-AUC=0.404098 | val_ROC-AUC=0.746029
+Epoch 51/100 | train_loss=1.031173 | val_loss=1.035958 | val_PR-AUC=0.404426 | val_ROC-AUC=0.746090
+Epoch 52/100 | train_loss=1.031793 | val_loss=1.037009 | val_PR-AUC=0.404155 | val_ROC-AUC=0.746172
+Epoch 53/100 | train_loss=1.031429 | val_loss=1.035740 | val_PR-AUC=0.404821 | val_ROC-AUC=0.746457
+Epoch 54/100 | train_loss=1.031641 | val_loss=1.035470 | val_PR-AUC=0.405313 | val_ROC-AUC=0.746487
+Epoch 55/100 | train_loss=1.031055 | val_loss=1.036125 | val_PR-AUC=0.405009 | val_ROC-AUC=0.746387
+Epoch 56/100 | train_loss=1.030678 | val_loss=1.035570 | val_PR-AUC=0.404859 | val_ROC-AUC=0.746337
+Epoch 57/100 | train_loss=1.030711 | val_loss=1.035651 | val_PR-AUC=0.404636 | val_ROC-AUC=0.746529
+Epoch 58/100 | train_loss=1.030413 | val_loss=1.035523 | val_PR-AUC=0.405193 | val_ROC-AUC=0.746469
+Epoch 59/100 | train_loss=1.030692 | val_loss=1.035276 | val_PR-AUC=0.405347 | val_ROC-AUC=0.746426
+Epoch 60/100 | train_loss=1.030011 | val_loss=1.035725 | val_PR-AUC=0.405570 | val_ROC-AUC=0.746441
+Epoch 61/100 | train_loss=1.030194 | val_loss=1.035145 | val_PR-AUC=0.405218 | val_ROC-AUC=0.746732
+Epoch 62/100 | train_loss=1.029904 | val_loss=1.035147 | val_PR-AUC=0.405554 | val_ROC-AUC=0.746614
+Epoch 63/100 | train_loss=1.029363 | val_loss=1.035487 | val_PR-AUC=0.405710 | val_ROC-AUC=0.746724
+Epoch 64/100 | train_loss=1.029511 | val_loss=1.035409 | val_PR-AUC=0.405937 | val_ROC-AUC=0.746593
+Epoch 65/100 | train_loss=1.029153 | val_loss=1.035260 | val_PR-AUC=0.405687 | val_ROC-AUC=0.746623
+Epoch 66/100 | train_loss=1.029343 | val_loss=1.034900 | val_PR-AUC=0.405734 | val_ROC-AUC=0.746847
+Epoch 67/100 | train_loss=1.029322 | val_loss=1.035159 | val_PR-AUC=0.406143 | val_ROC-AUC=0.746785
+Epoch 68/100 | train_loss=1.028644 | val_loss=1.034836 | val_PR-AUC=0.406379 | val_ROC-AUC=0.746702
+Epoch 69/100 | train_loss=1.029123 | val_loss=1.034770 | val_PR-AUC=0.406194 | val_ROC-AUC=0.746826
+Epoch 70/100 | train_loss=1.029171 | val_loss=1.035042 | val_PR-AUC=0.406453 | val_ROC-AUC=0.746908
+Epoch 71/100 | train_loss=1.029010 | val_loss=1.035222 | val_PR-AUC=0.406173 | val_ROC-AUC=0.746810
+Epoch 72/100 | train_loss=1.028826 | val_loss=1.034969 | val_PR-AUC=0.406282 | val_ROC-AUC=0.746667
+Epoch 73/100 | train_loss=1.028460 | val_loss=1.034837 | val_PR-AUC=0.406210 | val_ROC-AUC=0.746726
+Epoch 74/100 | train_loss=1.028318 | val_loss=1.034858 | val_PR-AUC=0.406326 | val_ROC-AUC=0.746670
+Epoch 75/100 | train_loss=1.028305 | val_loss=1.034913 | val_PR-AUC=0.406726 | val_ROC-AUC=0.746794
+Epoch 76/100 | train_loss=1.027831 | val_loss=1.035088 | val_PR-AUC=0.407010 | val_ROC-AUC=0.746783
+Epoch 77/100 | train_loss=1.028505 | val_loss=1.034709 | val_PR-AUC=0.406560 | val_ROC-AUC=0.746954
+Epoch 78/100 | train_loss=1.027545 | val_loss=1.035269 | val_PR-AUC=0.406242 | val_ROC-AUC=0.746893
+Epoch 79/100 | train_loss=1.027569 | val_loss=1.034831 | val_PR-AUC=0.406703 | val_ROC-AUC=0.746993
+Epoch 80/100 | train_loss=1.027974 | val_loss=1.035042 | val_PR-AUC=0.407138 | val_ROC-AUC=0.746657
+Epoch 81/100 | train_loss=1.027914 | val_loss=1.034296 | val_PR-AUC=0.407422 | val_ROC-AUC=0.746991
+Epoch 82/100 | train_loss=1.027405 | val_loss=1.034670 | val_PR-AUC=0.406319 | val_ROC-AUC=0.746828
+Epoch 83/100 | train_loss=1.027037 | val_loss=1.034463 | val_PR-AUC=0.407227 | val_ROC-AUC=0.746908
+Epoch 84/100 | train_loss=1.027008 | val_loss=1.034445 | val_PR-AUC=0.407344 | val_ROC-AUC=0.747094
+Epoch 85/100 | train_loss=1.026849 | val_loss=1.034748 | val_PR-AUC=0.406820 | val_ROC-AUC=0.746926
+Epoch 86/100 | train_loss=1.027037 | val_loss=1.034900 | val_PR-AUC=0.406924 | val_ROC-AUC=0.746566
+Early stopping: 86 epoch에서 중단
+최적 epoch: 81, validation PR-AUC=0.407422
+validation 선택 threshold: 0.688982
+TEST | PR-AUC=0.405134 | ROC-AUC=0.745769 | F1=0.398783 | Precision=0.449175 | Recall=0.358557
+완료 산출물: C:\codes\SKN35-2nd-3Team\src\project_2nd\models\dl\26.08.28-dl-e100-p5\DNN_20260828_094006_7e84a4a_pjw_official
