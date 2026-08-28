@@ -31,7 +31,7 @@ METRICS = {
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="data/features/model_registration.json")
+    ap.add_argument("--out", default="data/features/model_registration_pjw.json")
     ap.add_argument("--model-id", default="pmh_ml_extratrees_pjw_v1")
     ap.add_argument("--model-name", default="ExtraTreesClassifier (Optuna tuned, pmh)")
     ap.add_argument("--version", default="1.0")
