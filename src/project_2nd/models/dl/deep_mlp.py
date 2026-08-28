@@ -24,7 +24,7 @@ class ModelConfig:
     weight_decay: float = 0.0001
     batch_size: int = 4096
     max_epochs: int = 7
-    early_stopping_patience: int = 2
+    early_stopping_patience: int = 5
     seed: int = 42
 
     def to_dict(self) -> dict[str, object]:
