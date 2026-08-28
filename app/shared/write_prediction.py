@@ -7,7 +7,8 @@ predictions 테이블에 예측 요청 결과(+ SHAP 설명)를 기록한다.
 import json
 from datetime import datetime
 from sqlalchemy import text
-from app.shared.db import get_engine
+
+from .db import get_engine
 
 
 def log_prediction(model_id: str, query_type: str, industry_code: str, score: float,
@@ -45,7 +46,7 @@ def log_prediction(model_id: str, query_type: str, industry_code: str, score: fl
 
 
 # 사용 예 (기존점주 위험도 조회 화면):
-#   from app.shared.write_prediction import log_prediction
+#   from .write_prediction import log_prediction   # (상대 import, 전엔 app.shared.write_prediction)
 #
 #   proba = model.predict_proba(X_one_store)[0][1]
 #   shap_values = explainer(X_one_store)

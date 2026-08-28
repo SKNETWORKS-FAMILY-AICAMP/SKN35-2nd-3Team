@@ -7,7 +7,8 @@ users 테이블에 로그인/회원가입 결과를 써넣는다.
 import uuid
 from datetime import datetime
 from sqlalchemy import text
-from app.shared.db import get_engine
+
+from .db import get_engine
 
 
 def create_user(user_type: str, login_id: str, password_hash: str, store_id: str | None = None) -> str:
@@ -18,7 +19,10 @@ def create_user(user_type: str, login_id: str, password_hash: str, store_id: str
     """
     engine = get_engine()
     values = {
-        'user_id': str(uuid.uuid4()),
+        # users.user_id는 스키마상 VARCHAR(30)이라 하이픈 포함 UUID(36자)는 그대로 못 들어간다.
+        # hex(하이픈 없는 32자)를 30자로 잘라서 씀 — 랜덤성이 충분해서(16^30) 데모 규모에서
+        # 충돌 걱정은 사실상 없다.
+        'user_id': uuid.uuid4().hex[:30],
         'user_type': user_type,
         'store_id': store_id,
         'login_id': login_id,
@@ -35,6 +39,6 @@ def create_user(user_type: str, login_id: str, password_hash: str, store_id: str
 
 
 # 사용 예 (기존점주 로그인 화면에서):
-#   from app.shared.write_user import create_user
+#   from .write_user import create_user   # (app/shared 내부 상대 import, 전엔 app.shared.write_user)
 #   user_id = create_user(user_type='owner', login_id=store_id,
 #                          password_hash=make_demo_password(store_id), store_id=store_id)
