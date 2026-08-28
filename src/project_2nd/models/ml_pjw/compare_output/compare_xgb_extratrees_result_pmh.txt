@@ -1,0 +1,76 @@
+=== xgboost: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc    pr_auc
+fold                                                             
+0     0.906161   0.735585  0.183447  0.293659  0.745720  0.399387
+1     0.906369   0.731452  0.185541  0.295998  0.744393  0.400387
+2     0.906190   0.734066  0.187716  0.298977  0.746609  0.401473
+3     0.905336   0.736564  0.183341  0.293601  0.745734  0.401673
+4     0.906252   0.727459  0.186700  0.297140  0.744874  0.398908
+
+=== xgboost: 평균 ± 표준편차 ===
+accuracy     0.9061 ± 0.0004
+precision     0.733 ± 0.0037
+recall       0.1853 ± 0.0019
+f1           0.2959 ± 0.0023
+roc_auc      0.7455 ± 0.0009
+pr_auc       0.4004 ± 0.0012
+
+=== xgboost: fold 평균 feature importance top 15 ===
+store_age_months                    0.264876
+snapshot_date                       0.232569
+previously_transitioned             0.194122
+floor_category                      0.111244
+transitioned_next                   0.075355
+industry_code                       0.031046
+dong_industry_historical_rate       0.024750
+dong_code                           0.016401
+nearest_same_industry_distance_m    0.009946
+industry_jung_code                  0.006230
+same_industry_count_300m            0.005267
+dong_industry_count                 0.003854
+total_count_300m                    0.003616
+coord_cluster_size                  0.003503
+dong_historical_rate                0.002873
+
+=== extratrees: fold별 성능 ===
+      accuracy  precision    recall        f1   roc_auc    pr_auc
+fold                                                             
+0     0.897199   0.539417  0.227309  0.319839  0.714915  0.350946
+1     0.897135   0.536043  0.225916  0.317866  0.712854  0.349235
+2     0.897703   0.548234  0.227710  0.321771  0.714214  0.353192
+3     0.896886   0.547510  0.224814  0.318747  0.712482  0.351978
+4     0.897464   0.541360  0.222261  0.315139  0.712368  0.346456
+
+=== extratrees: 평균 ± 표준편차 ===
+accuracy     0.8973 ± 0.0003
+precision    0.5425 ± 0.0053
+recall       0.2256 ± 0.0022
+f1           0.3187 ± 0.0025
+roc_auc      0.7134 ± 0.0011
+pr_auc       0.3504 ± 0.0026
+
+=== extratrees: fold 평균 feature importance top 15 ===
+store_age_months                    0.073327
+industry_historical_rate            0.064111
+dong_industry_historical_rate       0.061587
+total_count_300m                    0.060145
+coord_cluster_size                  0.056694
+snapshot_date                       0.056449
+same_industry_count_300m            0.056448
+lat                                 0.056387
+lng                                 0.055995
+nearest_same_industry_distance_m    0.053900
+dong_historical_rate                0.047748
+floor_category                      0.037365
+dong_industry_count                 0.037034
+dong_code                           0.026741
+korean_pop                          0.026464
+
+=== 5-fold 평균 비교 요약 (XGBoost vs ExtraTrees) ===
+            xgboost  extratrees
+accuracy   0.906062    0.897277
+precision  0.733025    0.542513
+recall     0.185349    0.225602
+f1         0.295875    0.318672
+roc_auc    0.745466    0.713367
+pr_auc     0.400366    0.350362

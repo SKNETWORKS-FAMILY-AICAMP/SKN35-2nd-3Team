@@ -1,0 +1,235 @@
+{
+  "model": "ExtraTreesClassifier (Optuna tuned)",
+  "hyperparameters": {
+    "n_estimators": 280,
+    "max_depth": 22,
+    "min_samples_leaf": 35,
+    "min_samples_split": 10,
+    "max_features": 0.8175392099040567
+  },
+  "explain_method": "SHAP TreeExplainer",
+  "sample": {
+    "source": "fold4 (test)",
+    "n_rows": 1000,
+    "seed": 42
+  },
+  "feature_importance": [
+    {
+      "rank": 1,
+      "feature": "store_age_months",
+      "mean_abs_shap": 0.100433,
+      "mean_shap": -0.032657,
+      "pct_of_total": 30.94
+    },
+    {
+      "rank": 2,
+      "feature": "snapshot_date",
+      "mean_abs_shap": 0.05133,
+      "mean_shap": -0.002042,
+      "pct_of_total": 15.81
+    },
+    {
+      "rank": 3,
+      "feature": "industry_historical_rate",
+      "mean_abs_shap": 0.031478,
+      "mean_shap": -0.012295,
+      "pct_of_total": 9.7
+    },
+    {
+      "rank": 4,
+      "feature": "industry_group",
+      "mean_abs_shap": 0.028011,
+      "mean_shap": -0.006367,
+      "pct_of_total": 8.63
+    },
+    {
+      "rank": 5,
+      "feature": "dong_industry_historical_rate",
+      "mean_abs_shap": 0.019175,
+      "mean_shap": -0.007478,
+      "pct_of_total": 5.91
+    },
+    {
+      "rank": 6,
+      "feature": "floor_category",
+      "mean_abs_shap": 0.01473,
+      "mean_shap": -0.011204,
+      "pct_of_total": 4.54
+    },
+    {
+      "rank": 7,
+      "feature": "previously_transitioned",
+      "mean_abs_shap": 0.008678,
+      "mean_shap": -0.003986,
+      "pct_of_total": 2.67
+    },
+    {
+      "rank": 8,
+      "feature": "industry_dae_code",
+      "mean_abs_shap": 0.008102,
+      "mean_shap": -0.001875,
+      "pct_of_total": 2.5
+    },
+    {
+      "rank": 9,
+      "feature": "industry_code",
+      "mean_abs_shap": 0.007141,
+      "mean_shap": -0.003709,
+      "pct_of_total": 2.2
+    },
+    {
+      "rank": 10,
+      "feature": "industry_jung_code",
+      "mean_abs_shap": 0.005754,
+      "mean_shap": -0.002336,
+      "pct_of_total": 1.77
+    },
+    {
+      "rank": 11,
+      "feature": "industry_jung_name",
+      "mean_abs_shap": 0.005568,
+      "mean_shap": -0.002915,
+      "pct_of_total": 1.72
+    },
+    {
+      "rank": 12,
+      "feature": "industry_name",
+      "mean_abs_shap": 0.004514,
+      "mean_shap": -0.002742,
+      "pct_of_total": 1.39
+    },
+    {
+      "rank": 13,
+      "feature": "gu_name",
+      "mean_abs_shap": 0.003769,
+      "mean_shap": -0.001933,
+      "pct_of_total": 1.16
+    },
+    {
+      "rank": 14,
+      "feature": "transitioned_next",
+      "mean_abs_shap": 0.003547,
+      "mean_shap": -0.000662,
+      "pct_of_total": 1.09
+    },
+    {
+      "rank": 15,
+      "feature": "dong_historical_rate",
+      "mean_abs_shap": 0.003446,
+      "mean_shap": -0.001312,
+      "pct_of_total": 1.06
+    },
+    {
+      "rank": 16,
+      "feature": "dong_code",
+      "mean_abs_shap": 0.003099,
+      "mean_shap": -0.001486,
+      "pct_of_total": 0.95
+    },
+    {
+      "rank": 17,
+      "feature": "lng",
+      "mean_abs_shap": 0.002555,
+      "mean_shap": -0.001661,
+      "pct_of_total": 0.79
+    },
+    {
+      "rank": 18,
+      "feature": "total_count_300m",
+      "mean_abs_shap": 0.002518,
+      "mean_shap": -0.001609,
+      "pct_of_total": 0.78
+    },
+    {
+      "rank": 19,
+      "feature": "same_industry_count_300m",
+      "mean_abs_shap": 0.002498,
+      "mean_shap": -0.001874,
+      "pct_of_total": 0.77
+    },
+    {
+      "rank": 20,
+      "feature": "dong_industry_count",
+      "mean_abs_shap": 0.002336,
+      "mean_shap": -0.001778,
+      "pct_of_total": 0.72
+    },
+    {
+      "rank": 21,
+      "feature": "lat",
+      "mean_abs_shap": 0.002155,
+      "mean_shap": -0.001691,
+      "pct_of_total": 0.66
+    },
+    {
+      "rank": 22,
+      "feature": "nearest_same_industry_distance_m",
+      "mean_abs_shap": 0.002084,
+      "mean_shap": -0.001125,
+      "pct_of_total": 0.64
+    },
+    {
+      "rank": 23,
+      "feature": "total_pop_avg",
+      "mean_abs_shap": 0.001881,
+      "mean_shap": -0.001325,
+      "pct_of_total": 0.58
+    },
+    {
+      "rank": 24,
+      "feature": "korean_pop",
+      "mean_abs_shap": 0.001852,
+      "mean_shap": -0.001286,
+      "pct_of_total": 0.57
+    },
+    {
+      "rank": 25,
+      "feature": "tourist_zone_candidate",
+      "mean_abs_shap": 0.001779,
+      "mean_shap": -0.000649,
+      "pct_of_total": 0.55
+    },
+    {
+      "rank": 26,
+      "feature": "foreign_long_pop",
+      "mean_abs_shap": 0.001705,
+      "mean_shap": -0.001212,
+      "pct_of_total": 0.53
+    },
+    {
+      "rank": 27,
+      "feature": "foreign_short_ratio",
+      "mean_abs_shap": 0.001513,
+      "mean_shap": -0.001136,
+      "pct_of_total": 0.47
+    },
+    {
+      "rank": 28,
+      "feature": "foreign_short_pop",
+      "mean_abs_shap": 0.00128,
+      "mean_shap": -0.000997,
+      "pct_of_total": 0.39
+    },
+    {
+      "rank": 29,
+      "feature": "coord_cluster_size",
+      "mean_abs_shap": 0.001274,
+      "mean_shap": -0.000851,
+      "pct_of_total": 0.39
+    },
+    {
+      "rank": 30,
+      "feature": "population_is_proxied",
+      "mean_abs_shap": 0.00025,
+      "mean_shap": -6.1e-05,
+      "pct_of_total": 0.08
+    },
+    {
+      "rank": 31,
+      "feature": "keyword_growth_score",
+      "mean_abs_shap": 0.000147,
+      "mean_shap": 3.6e-05,
+      "pct_of_total": 0.05
+    }
+  ]
+}

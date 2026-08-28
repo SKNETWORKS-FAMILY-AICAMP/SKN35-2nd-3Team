@@ -143,6 +143,7 @@ resized/
 *.pkl
 *.pickle
 *.npy
+*.joblib
 *.npz
 *.mat
 *.h5
