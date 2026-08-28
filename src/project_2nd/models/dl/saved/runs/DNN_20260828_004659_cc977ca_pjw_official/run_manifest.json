@@ -1,0 +1,98 @@
+{
+  "run_id": "DNN_20260828_004659_cc977ca_pjw_official",
+  "created_at_kst": "2026-08-28T00:46:59.897800+09:00",
+  "command": [
+    "C:\\codes\\.venvs\\SKN35-2nd-3Team-dl-gpu\\Scripts\\python.exe",
+    "src\\project_2nd\\models\\dl\\train_dnn.py"
+  ],
+  "git_branch": "jjb",
+  "git_commit": "cc977ca11d9f05bf49d99869e6217f0a674d6bd1",
+  "dataset_path": "C:\\codes\\SKN35-2nd-3Team\\data\\processed\\modeling_dataset_refined_pjw.csv",
+  "dataset_sha256": "9180DA5F763FC811A08DC8C1C2069DEC2DEA4D319B404686B8BC129668857C5E",
+  "prepared_data_dir": "C:\\codes\\SKN35-2nd-3Team\\data\\processed\\dnn_pjw_official",
+  "python_version": "3.12.13",
+  "torch_version": "2.13.0+cu126",
+  "cuda_build": "12.6",
+  "cuda_available": true,
+  "gpu_name": "NVIDIA GeForce RTX 3070",
+  "driver_version": "591.86",
+  "sklearn_version": "1.9.0",
+  "seed": 42,
+  "model_config": {
+    "hidden_dims": [
+      256,
+      128,
+      64
+    ],
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "batch_size": 4096,
+    "max_epochs": 7,
+    "early_stopping_patience": 2,
+    "seed": 42
+  },
+  "model_parameter_count": 51073,
+  "split_definition": {
+    "train": [
+      0,
+      1,
+      2
+    ],
+    "validation": [
+      3
+    ],
+    "test": [
+      4
+    ]
+  },
+  "split_counts": {
+    "train_fold_0_2": 1137077,
+    "validation_fold_3": 375496,
+    "test_fold_4": 377009
+  },
+  "feature_policy": "pjw_official",
+  "feature_names": [
+    "snapshot_month_index",
+    "industry_dae_code_enc",
+    "industry_group_enc",
+    "industry_jung_code_enc",
+    "industry_jung_name_enc",
+    "industry_code_enc",
+    "industry_name_enc",
+    "gu_name_enc",
+    "lng",
+    "lat",
+    "floor_category_enc",
+    "same_industry_count_300m",
+    "total_count_300m",
+    "nearest_same_industry_distance_m",
+    "dong_industry_count",
+    "coord_cluster_size",
+    "store_age_months",
+    "previously_transitioned",
+    "keyword_growth_score",
+    "korean_pop",
+    "foreign_long_pop",
+    "foreign_short_pop",
+    "foreign_short_ratio",
+    "tourist_zone_candidate",
+    "population_is_proxied",
+    "industry_historical_rate",
+    "dong_historical_rate",
+    "dong_industry_historical_rate",
+    "is_mass_reclass_window",
+    "is_left_censored_age",
+    "is_trend_keyword_match",
+    "industry_specialization_300m",
+    "competition_per_capita_300m",
+    "dong_industry_count_growth"
+  ],
+  "target_name": "is_closed_next",
+  "output_scale": "logit; sigmoid is an uncalibrated risk score",
+  "notes": [
+    "model selection used validation PR-AUC only",
+    "classification threshold was selected on validation only",
+    "test was evaluated after model and threshold selection"
+  ]
+}

@@ -1,5 +1,5 @@
 """
-db/etl/03_load_to_tidb.py
+python src/project_2nd/db/etl/load_to_tidb.py
 
 db/schema.sql로 테이블을 생성하고, data/features/*.csv를 순서대로 적재한다.
 순서는 FK 의존관계를 지켜야 한다 (참조되는 테이블이 먼저 채워져야 함).
