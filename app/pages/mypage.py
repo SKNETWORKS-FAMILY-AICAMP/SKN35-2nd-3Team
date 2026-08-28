@@ -521,26 +521,29 @@ def init_session_state():
             },
         ]
 
-    if "favorite_regions" not in st.session_state:
-        # predictions(user_id=본인) → stores → administrative_dongs 집계 (관제실의 인기 조회
-        # 지역과 같은 방식 + WHERE user_id=본인).
-        # TODO(데모용 임시 폴백): DB 연결이 없거나 아직 조회 이력이 없으면 화면 확인용 더미로.
-        db_regions = get_favorite_regions(user["user_id"])
-        st.session_state.favorite_regions = db_regions or [
-            {"dong_name": "역삼동", "count": 8},
-            {"dong_name": "서교동", "count": 5},
-            {"dong_name": "성수동", "count": 3},
-        ]
+    # favorite_regions/my_recent_views는 다른 페이지(메인 지도)에서의 클릭/분석으로
+    # 계속 늘어나는 값이라, 다른 값들과 달리 세션당 1회 캐싱하면 안 된다 — 마이페이지를
+    # 한 번 연 뒤 메인페이지로 돌아가 동을 더 클릭해도 session_state가 세션 내내 유지돼
+    # 예전 값이 그대로 보이는 버그가 있었다(2026-08-28). 매 페이지 로드마다 새로 조회한다.
 
-    if "my_recent_views" not in st.session_state:
-        # user_view_history(지도 클릭 → 개인별 조회 이력) 기준 "내가 본 지역".
-        # TODO(데모용 임시 폴백): 지도 클릭 로직이 아직 increment_user_view()를 호출하지
-        # 않으면 항상 빈 리스트가 오는데, 화면 확인을 위해 더미로 채워서 보여준다.
-        db_views = get_my_recent_views(user["user_id"])
-        st.session_state.my_recent_views = db_views or [
-            {"dong_name": "역삼동", "gu_name": "강남구", "view_count": 4, "last_viewed_at": "2026-08-27 21:10"},
-            {"dong_name": "합정동", "gu_name": "마포구", "view_count": 2, "last_viewed_at": "2026-08-26 14:32"},
-        ]
+    # predictions(user_id=본인) → stores → administrative_dongs 집계 (관제실의 인기 조회
+    # 지역과 같은 방식 + WHERE user_id=본인).
+    # TODO(데모용 임시 폴백): DB 연결이 없거나 아직 조회 이력이 없으면 화면 확인용 더미로.
+    db_regions = get_favorite_regions(user["user_id"])
+    st.session_state.favorite_regions = db_regions or [
+        {"dong_name": "역삼동", "count": 8},
+        {"dong_name": "서교동", "count": 5},
+        {"dong_name": "성수동", "count": 3},
+    ]
+
+    # user_view_history(지도 클릭 → 개인별 조회 이력) 기준 "내가 본 지역".
+    # TODO(데모용 임시 폴백): 지도 클릭 로직이 아직 increment_user_view()를 호출하지
+    # 않으면 항상 빈 리스트가 오는데, 화면 확인을 위해 더미로 채워서 보여준다.
+    db_views = get_my_recent_views(user["user_id"])
+    st.session_state.my_recent_views = db_views or [
+        {"dong_name": "역삼동", "gu_name": "강남구", "view_count": 4, "last_viewed_at": "2026-08-27 21:10"},
+        {"dong_name": "합정동", "gu_name": "마포구", "view_count": 2, "last_viewed_at": "2026-08-26 14:32"},
+    ]
 
     if "store_status" not in st.session_state and store_id:
         # TODO(데모용 임시 폴백): DB 연결이 없거나 이 store_id로 조회된 행이 없으면 더미로.
