@@ -26,7 +26,7 @@ from shared.write_model import save_model_json  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--test-metrics", default="models/dl/saved/test_metrics.json",
+    ap.add_argument("--test-metrics", default="src/project_2nd/models/dl/saved/test_metrics.json",
                      help="dl_test_tm.py 산출물")
     ap.add_argument("--out", default="data/features/model_registration.json")
     ap.add_argument("--model-id", default="dnn_mlp_v2")

@@ -2,3 +2,9 @@ create_dong_view 아직 안 됐음
 각자 json 파일 어디서 저장할지
 write_model로 한번에 저장 가능하게끔
 클릭하면은 클릭 카운트 쌓이게(owner, founder), 관리자는 한번에 보여줄 수 있게
+
+
+python load_models_and_predictions.py \
+    --model-json data/features/model_registration.json \
+    --auto-promote-best
+    # 필요하면 --promote-metric f1_score 처럼 다른 지표로 비교 가능

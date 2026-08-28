@@ -21,7 +21,7 @@
                 -> ROC-AUC / PR-AUC / 상위 5% Lift 산출 (베이스라인: ROC-AUC 0.721~0.728, PR-AUC 0.300~0.317)
       Phase B : Phase A에서 찾은 best_epoch만큼 fold 0~4 전체로 재학습 -> 실서빙용 프로덕션 모델
 
-산출물 (--artifact-dir, 기본 models/dl/saved/)
+산출물 (--artifact-dir, 기본 src/project_2nd/models/dl/saved/)
     model_state.pt        state_dict (ClosureMLP 정의는 이 파일 것을 그대로 재사용)
     scaler.json            연속형 피처 표준화 파라미터 (전체 데이터 기준, Phase B)
     feature_config.json   피처 목록/순서, 카테고리 cardinality, 임베딩 차원, 성능 지표
@@ -259,7 +259,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/processed/modeling_dataset_preprocessed_pmh.csv",
                      help="프로젝트 루트 기준 상대경로 (기본: data/processed/modeling_dataset_preprocessed_pmh.csv)")
-    ap.add_argument("--artifact-dir", default="models/dl/saved",
+    ap.add_argument("--artifact-dir", default="src/project_2nd/models/dl/saved",
                      help="모델/스케일러/피처설정 저장 위치 (fold_0/ ~ fold_4/ 서브폴더 생성)")
     ap.add_argument("--max-epochs", type=int, default=50)
     ap.add_argument("--patience", type=int, default=6)
@@ -383,6 +383,7 @@ def main():
     print(f"PR-AUC    : {np.mean(pr_list):.4f} ± {np.std(pr_list):.4f}   (fold별: {[round(x,4) for x in pr_list]})")
     print(f"Top5% Lift: {np.mean(lift_list):.2f}x ± {np.std(lift_list):.2f}   (fold별: {[round(x,2) for x in lift_list]})")
     print("참고 - LightGBM 베이스라인: ROC-AUC 0.721~0.728, PR-AUC 0.300~0.317, Lift 4.12x (single-split)")
+    print("\n다음 단계: dl_test_tm.py로 accuracy/precision/recall/f1까지 계산해서 models 테이블용 지표 완성")
 
     feature_config = {
         "cont_cols": CONT_COLS,

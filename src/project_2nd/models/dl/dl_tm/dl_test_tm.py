@@ -9,7 +9,7 @@ train_dnn.py/test_dnn.py 분리 구조와 동일하게 맞춤.
 (대용량 fold라 스칼라 하나 고르는 거라 오버피팅 위험은 낮음 — 더 엄밀하게
 하려면 별도 validation split에서 임계값을 찾고 test에는 적용만 해야 함).
 
-산출물: models/dl/saved/test_metrics.json — export_model_dl_tm.py가 이 파일을
+산출물: src/project_2nd/models/dl/saved/test_metrics.json — export_model_dl_tm.py가 이 파일을
 읽어서 models 테이블 등록용 accuracy/precision/recall/f1/roc_auc를 채움.
 
 실행 (프로젝트 루트에서, dl_train_tm.py 학습 완료 후):
@@ -113,8 +113,8 @@ def evaluate_fold(probs, y_true, label=""):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/processed/modeling_dataset_preprocessed_pmh.csv")
-    ap.add_argument("--artifact-dir", default="models/dl/saved")
-    ap.add_argument("--out", default="models/dl/saved/test_metrics.json")
+    ap.add_argument("--artifact-dir", default="src/project_2nd/models/dl/saved")
+    ap.add_argument("--out", default="src/project_2nd/models/dl/saved/test_metrics.json")
     ap.add_argument("--n-folds", type=int, default=N_FOLDS)
     args = ap.parse_args()
 

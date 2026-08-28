@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 dl_train_tm.py가 만든 fold_0~fold_4 앙상블을 로드해서, 최신 스냅샷 기준 활성 매장
-전체에 대해 폐업 위험 점수(score)를 계산하고 `predictions` 테이블 컬럼에 맞춰 JSON으로 저장.
+전체에 대해 폐업 위험 점수(score)를 계산하고 `predictions` 테이블 컬럼에 맞춰 CSV로 저장.
 
 핵심: 매장마다 fold_of(store_id)를 다시 계산해서, "그 매장을 학습에 전혀 쓰지 않은
 fold 모델"로만 스코어링함. 5개 fold가 서로 다른 20%씩을 held-out 하므로 전체 매장이
@@ -13,15 +13,15 @@ query_type='new_location'(예비창업자가 임의 좌표+업종을 입력하�
 피처 조인을 실시간으로 새로 계산해야 하는 앱 서빙 로직이라 별도 구현이 필요함.
 
 실행 (프로젝트 루트에서):
-    python src/project_2nd/models/dl/dl_tm/dl_score_tm.py
-    python src/project_2nd/models/dl/dl_tm/dl_score_tm.py --model-id dnn_mlp_v2 \
+    python models/dl/dl_tm/dl_score_tm.py
+    python models/dl/dl_tm/dl_score_tm.py --model-id dnn_mlp_v2 \
         --data data/processed/modeling_dataset_preprocessed_pmh.csv \
-        --artifact-dir models/dl/saved \
+        --artifact-dir src/project_2nd/models/dl/saved \
         --out data/features/predictions_raw.json
 
 주의: predictions.model_id는 models 테이블을 FK로 참조함.
       DB에 올리기 전에 write_model.py 등으로 models 테이블에 model_id 행을
-      먼저 등록해둬야 함 (여기서는 --model-id 문자열 값만 JSON에 채워둠).
+      먼저 등록해둬야 함 (여기서는 --model-id 문자열 값만 CSV에 채워둠).
 """
 import argparse
 import json
@@ -91,7 +91,7 @@ def predict_scores_for_fold(fold_artifacts, df_sub, batch_size=8192):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/processed/modeling_dataset_preprocessed_pmh.csv")
-    ap.add_argument("--artifact-dir", default="models/dl/saved")
+    ap.add_argument("--artifact-dir", default="src/project_2nd/models/dl/saved")
     ap.add_argument("--out", default="data/features/predictions_raw.json")
     ap.add_argument("--model-id", default="dnn_mlp_v2",
                      help="models 테이블에 미리 등록해둘 model_id 값")
@@ -140,7 +140,7 @@ def main():
         "query_lng": None,
         "industry_code": latest["industry_code"],
         "score": latest["score"],
-        "shap_top_features": None,       # shap_explain_tm.py가 채워서 최종 JSON으로 다시 저장
+        "shap_top_features": None,       # shap_explain_tm.py가 채워서 최종 CSV로 다시 저장
     })
 
     out_path = Path(args.out)

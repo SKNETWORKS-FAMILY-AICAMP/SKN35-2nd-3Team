@@ -27,6 +27,20 @@ import해서 씀 — write_model.py 자체는 app/shared/ 밑에서 상대 impor
 
     predictions 없이 모델만 등록하고 싶으면 --predictions-json 없이
     --model-json만 줘도 됨.
+
+    적재 후 "지금 등록된 모델 중 성능이 제일 좋은 모델"을 자동으로
+    is_production=True로 지정하고 싶으면 --auto-promote-best 추가
+    (기본 비교 기준: roc_auc, --promote-metric으로 다른 지표 선택 가능):
+
+    python load_models_and_predictions.py \\
+        --model-json data/features/model_registration.json \\
+        --auto-promote-best
+
+    이미 모델이 다 등록/적재된 상태에서, 새로 아무것도 안 넣고 그냥
+    "지금 DB에 있는 모델들 중에서 다시 골라줘"만 하고 싶으면
+    --model-json/--predictions-json 없이 이렇게만 실행해도 됨:
+
+    python load_models_and_predictions.py --auto-promote-best
 """
 import argparse
 import sys
@@ -36,7 +50,9 @@ _APP_DIR = str(Path(__file__).resolve().parent / "app")
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-from shared.write_model import load_models_json_to_db, load_predictions_json_to_db  # noqa: E402
+from shared.write_model import (  # noqa: E402
+    load_models_json_to_db, load_predictions_json_to_db, promote_best_model,
+)
 
 
 def main():
@@ -48,10 +64,15 @@ def main():
     ap.add_argument("--predictions-json", action="append", default=[],
                      help="predictions JSON 경로 (모델별로 여러 번 반복 가능)")
     ap.add_argument("--chunk-size", type=int, default=5000)
+    ap.add_argument("--auto-promote-best", action="store_true",
+                     help="적재 후 DB에 등록된 모델 중 성능이 제일 좋은 모델을 자동으로 프로덕션 지정")
+    ap.add_argument("--promote-metric", default="roc_auc",
+                     choices=["roc_auc", "accuracy", "precision_score", "recall_score", "f1_score"],
+                     help="--auto-promote-best 사용 시 비교 기준 (기본 roc_auc)")
     args = ap.parse_args()
 
-    if not args.model_json and not args.predictions_json:
-        raise SystemExit("--model-json 또는 --predictions-json을 최소 1개 이상 넘겨야 함")
+    if not args.model_json and not args.predictions_json and not args.auto_promote_best:
+        raise SystemExit("--model-json / --predictions-json / --auto-promote-best 중 최소 1개는 넘겨야 함")
 
     n_models = len(args.model_json)
     n_preds = len(args.predictions_json)
@@ -64,6 +85,10 @@ def main():
         if i < n_preds:
             print(f"predictions 적재: {args.predictions_json[i]}")
             load_predictions_json_to_db(args.predictions_json[i], chunk_size=args.chunk_size)
+
+    if args.auto_promote_best:
+        print(f"\n=== 자동 프로덕션 선정 (기준: {args.promote_metric}) ===")
+        promote_best_model(metric=args.promote_metric)
 
     print("\n전체 완료.")
 

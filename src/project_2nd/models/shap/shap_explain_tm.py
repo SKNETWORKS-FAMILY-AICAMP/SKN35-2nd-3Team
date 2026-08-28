@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 models/dl/dl_tm/dl_score_tm.py가 만든 predictions_raw.json에 shap_top_features(JSON)를 채워
-DB `predictions` 테이블에 그대로 적재 가능한 최종 JSON을 만든다.
+DB `predictions` 테이블에 그대로 적재 가능한 최종 CSV를 만든다.
 
 dl_score_tm.py와 동일한 원칙: 매장마다 fold_of(store_id)로 "그 매장을 학습에 안 쓴
 fold 모델"을 찾아서, 그 모델 기준으로 SHAP을 계산함 (배경표본도 같은 fold 데이터에서
@@ -26,8 +26,8 @@ MLP는 트리 모델과 달리 TreeExplainer를 못 쓰므로 KernelExplainer + 
          지금은 계획대로 KernelExplainer로 구현해둠.
 
 실행 (프로젝트 루트에서):
-    python src/project_2nd/models/shap/shap_explain_tm.py
-    python src/project_2nd/models/shap/shap_explain_tm.py --sample-size 5000 --select top_risk --top-k 5
+    python models/shap/shap_explain_tm.py
+    python models/shap/shap_explain_tm.py --sample-size 5000 --select top_risk --top-k 5
 """
 import argparse
 import json
@@ -125,14 +125,14 @@ def explain_fold_subset(fold_artifacts, fold_pool_df, explain_df, n_cont,
             }
             for j in top_idx
         ]
-        shap_items_list.append(items)  # JSON 파일에 중첩 객체로 그대로 들어가도록 문자열화 안 함
+        shap_items_list.append(items)  # JSON 파일에 그대로 중첩 객체로 들어가도록 문자열화 안 함
     return shap_items_list
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/processed/modeling_dataset_preprocessed_pmh.csv")
-    ap.add_argument("--artifact-dir", default="models/dl/saved")
+    ap.add_argument("--artifact-dir", default="src/project_2nd/models/dl/saved")
     ap.add_argument("--predictions-json", default="data/features/predictions_raw.json",
                      help="models/dl/dl_tm/dl_score_tm.py 산출물")
     ap.add_argument("--out", default="data/features/predictions_for_db.json",
@@ -169,8 +169,7 @@ def main():
     latest = df[df["snapshot_date"] == target_snapshot].reset_index(drop=True)
     print(f"snapshot={target_snapshot}: 후보 매장 {len(latest):,}건")
 
-    with open(args.predictions_json, encoding="utf-8") as f:
-        preds_records = json.load(f)
+    preds_records = json.load(open(args.predictions_json, encoding="utf-8"))
     preds = pd.DataFrame(preds_records)
     latest = latest.merge(preds[["store_id", "score"]], on="store_id", how="inner")
     latest["_fold"] = latest["store_id"].apply(lambda sid: fold_of(sid, k=N_FOLDS))

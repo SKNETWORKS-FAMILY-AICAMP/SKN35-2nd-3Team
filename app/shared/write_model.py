@@ -1,37 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-write_model.py — 최종 DB 적재 스크립트. 이 파일 하나만 실행하면
-(model_registration.json + predictions.json) 쌍을 models/predictions
-테이블에 한 번에 적재함. 팀원 여러 명이 각자 모델을 만들었으면(예: 태민님
-dl_tm/, pjw님 official 파이프라인), 각자의 JSON 쌍을 인자로 여러 개
-넘기면 한 번의 실행으로 전부 들어감.
+models/predictions 테이블 write 헬퍼 라이브러리. app/shared/ 밑에서
+write_user.py, write_prediction.py 등과 동일한 컨벤션(from .db import get_engine,
+상대 import)으로 동작함 — 그래서 이 파일 자체는 직접 실행하지 않고 항상
+import해서 씀 (직접 실행하면 상대 import가 깨짐, app.py 등과 동일한 이유).
+
+실제로 "마지막에 실행하는" 스크립트는 프로젝트 루트의 load_models_and_predictions.py임
+— 그게 이 파일의 함수들을 shared.write_model로 import해서 씀.
 
 === 1단계: 각자 모델/SHAP 만드는 쪽에서 (DB 접속 불필요) ===
 
-    from write_model import save_model_json
-    save_model_json("model_registration.json", model_id=..., ...)
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "app"))
+    from shared.write_model import save_model_json
 
-    # predictions는 predictions_csv_to_json.py로 CSV -> JSON 변환
-    # (dl_score_tm.py/shap_explain_tm.py가 만든 predictions_for_db.csv 기준)
+    save_model_json("data/features/model_registration.json", model_id=..., ...)
 
-=== 2단계: 마지막에 이 스크립트 한 번 실행 (DB 담당) ===
+    (export_model_dl_tm.py / export_model_pjw.py가 이미 이 방식으로 만들어져 있음)
 
-    python write_model.py \\
-        --model-json models/dl/dl_tm/model_registration.json \\
-        --predictions-json data/features/predictions_dnn_tm.json \\
-        --model-json models/dl/pjw_official/model_registration.json \\
-        --predictions-json data/features/predictions_pjw.json
+=== 2단계: 마지막에 (DB 담당) ===
 
-    (--model-json / --predictions-json 쌍을 순서대로 매칭해서, 모델 개수만큼
-     반복해서 적재함 — 모델을 먼저 넣어야 predictions의 model_id FK가 통과되므로
-     항상 "그 모델 -> 그 모델의 predictions" 순서로 처리함)
-
-    predictions 없이 모델만 등록하고 싶으면 --predictions-json 없이
-    --model-json만 줘도 됨.
+    python load_models_and_predictions.py \\
+        --model-json data/features/model_registration.json \\
+        --predictions-json data/features/predictions_for_db.json
 """
-import argparse
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
@@ -39,14 +33,7 @@ from typing import Optional, Union
 import numpy as np
 from sqlalchemy import text
 
-_APP_DIR = str(Path(__file__).resolve().parent / "app")
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
-
-try:
-    from shared.db import get_engine  # DB 적재(2단계) 시점에만 필요
-except ImportError:
-    get_engine = None  # 1단계(JSON 저장)만 쓸 때는 DB 연결 자체가 필요 없음
+from .db import get_engine
 
 
 # =====================================================================
@@ -143,12 +130,6 @@ _INSERT_PREDICTION_SQL = text("""
 """)
 
 
-def _require_engine():
-    if get_engine is None:
-        raise RuntimeError("DB 적재 기능은 app/shared/db.py를 불러올 수 있는 환경에서만 동작함")
-    return get_engine()
-
-
 def _insert_one_model(engine, entry: dict, demote_others: bool = True) -> None:
     with engine.begin() as conn:
         conn.execute(_UPSERT_MODEL_SQL, entry)
@@ -159,7 +140,7 @@ def _insert_one_model(engine, entry: dict, demote_others: bool = True) -> None:
 def register_model(model_id, model_name, version, model_type, metrics=None,
                     trained_at=None, is_production=False, demote_others=True) -> None:
     """JSON 안 거치고 바로 DB에 모델 1건 등록하고 싶을 때 쓰는 대안 함수."""
-    engine = _require_engine()
+    engine = get_engine()
     entry = _build_model_dict(model_id, model_name, version, model_type, metrics, trained_at, is_production)
     _insert_one_model(engine, entry, demote_others=demote_others)
     print(f"models 테이블에 '{model_id}' 등록 완료" + (" (프로덕션으로 지정됨)" if is_production else ""))
@@ -167,7 +148,7 @@ def register_model(model_id, model_name, version, model_type, metrics=None,
 
 def load_models_json_to_db(json_path: Union[str, Path]) -> None:
     """model_registration.json -> models 테이블."""
-    engine = _require_engine()
+    engine = get_engine()
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     entries = data if isinstance(data, list) else [data]
@@ -176,6 +157,64 @@ def load_models_json_to_db(json_path: Union[str, Path]) -> None:
         _insert_one_model(engine, entry, demote_others=True)
         print(f"  [models] '{entry['model_id']}' 적재 완료" + (" (프로덕션)" if entry.get("is_production") else ""))
     print(f"  -> {json_path}: {len(entries)}건")
+
+
+_VALID_PROMOTE_METRICS = ("roc_auc", "accuracy", "precision_score", "recall_score", "f1_score")
+
+
+def promote_best_model(metric: str = "roc_auc") -> Optional[str]:
+    """DB에 등록된 모든 모델 중 metric 값이 가장 높은 모델을 자동으로 is_production=True로 지정.
+
+    사람이 매번 is_production을 수동으로 정해서 넘기지 않아도, 이 함수를 한 번
+    호출하면 그 시점 기준 "제일 성능 좋은 모델"이 자동으로 프로덕션이 됨
+    (나머지는 자동으로 False로 내려감). NULL인 모델은 비교 대상에서 제외.
+
+    Args:
+        metric: 비교 기준 컬럼. roc_auc / accuracy / precision_score /
+                recall_score / f1_score 중 하나 (기본 roc_auc).
+
+    Returns:
+        프로덕션으로 지정된 model_id. 비교할 모델이 하나도 없으면(전부 NULL) None.
+    """
+    if metric not in _VALID_PROMOTE_METRICS:
+        raise ValueError(f"metric은 {_VALID_PROMOTE_METRICS} 중 하나여야 함 (받은 값: {metric!r})")
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        best = conn.execute(text(
+            f"SELECT model_id, {metric} FROM models "
+            f"WHERE {metric} IS NOT NULL ORDER BY {metric} DESC LIMIT 1"
+        )).fetchone()
+
+    if best is None:
+        print(f"promote_best_model: {metric} 값이 있는 모델이 하나도 없어서 아무것도 안 함")
+        return None
+
+    best_model_id, best_value = best
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE models SET is_production = FALSE WHERE model_id != :model_id"),
+                     {"model_id": best_model_id})
+        conn.execute(text("UPDATE models SET is_production = TRUE WHERE model_id = :model_id"),
+                     {"model_id": best_model_id})
+
+    print(f"자동 선정: '{best_model_id}' ({metric}={best_value}) -> is_production=True로 지정, 나머지는 False")
+
+    # 안전장치: 선정된 모델의 predictions가 실제로 DB에 있는지 확인
+    # (성능 지표만 보고 골랐는데 그 모델 predictions가 아직 안 올라와 있으면
+    #  화면에 아무 데이터도 안 뜨는 사고가 남 — 그 전에 경고)
+    with engine.connect() as conn:
+        pred_count = conn.execute(
+            text("SELECT COUNT(*) FROM predictions WHERE model_id = :model_id"),
+            {"model_id": best_model_id},
+        ).scalar()
+    if not pred_count:
+        print(f"⚠ 경고: '{best_model_id}'는 predictions 테이블에 데이터가 0건입니다. "
+              f"이 모델용 predictions.json을 아직 적재 안 했다면, 지금 화면엔 이 모델 데이터가 "
+              f"하나도 안 뜹니다 — load_predictions_json_to_db()로 먼저 적재하세요.")
+    else:
+        print(f"  (predictions 테이블에 이 모델 데이터 {pred_count:,}건 확인됨 — 정상)")
+
+    return best_model_id
 
 
 def _none_if_nan(v):
@@ -220,7 +259,7 @@ def _check_model_registered(engine, model_id: str) -> None:
 
 def load_predictions_json_to_db(json_path: Union[str, Path], chunk_size: int = 5000) -> None:
     """predictions.json -> predictions 테이블."""
-    engine = _require_engine()
+    engine = get_engine()
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     records = data if isinstance(data, list) else [data]
@@ -238,42 +277,3 @@ def load_predictions_json_to_db(json_path: Union[str, Path], chunk_size: int = 5
         inserted += len(chunk)
         print(f"  [predictions] {inserted:,}/{n:,} 적재 완료")
     print(f"  -> {json_path}: {inserted:,}건")
-
-
-# =====================================================================
-# CLI: 모델 여러 개를 한 번의 실행으로 전부 적재
-# =====================================================================
-
-def main():
-    ap = argparse.ArgumentParser(
-        description="여러 모델의 (model_registration.json, predictions.json) 쌍을 한 번에 DB에 적재"
-    )
-    ap.add_argument("--model-json", action="append", default=[],
-                     help="모델 등록 JSON 경로 (여러 모델이면 여러 번 반복)")
-    ap.add_argument("--predictions-json", action="append", default=[],
-                     help="predictions JSON 경로 (--model-json과 순서로 짝지어짐, 없으면 생략 가능)")
-    ap.add_argument("--chunk-size", type=int, default=5000)
-    args = ap.parse_args()
-
-    if not args.model_json and not args.predictions_json:
-        raise SystemExit("--model-json 또는 --predictions-json을 최소 1개 이상 넘겨야 함")
-
-    n_models = len(args.model_json)
-    n_preds = len(args.predictions_json)
-    if n_preds > n_models:
-        raise SystemExit("--predictions-json 개수가 --model-json 개수보다 많습니다 — 순서를 맞춰서 짝지어 주세요")
-
-    for i in range(max(n_models, n_preds)):
-        print(f"\n=== [{i+1}/{max(n_models, n_preds)}번째 모델] ===")
-        if i < n_models:
-            print(f"모델 등록: {args.model_json[i]}")
-            load_models_json_to_db(args.model_json[i])
-        if i < n_preds:
-            print(f"predictions 적재: {args.predictions_json[i]}")
-            load_predictions_json_to_db(args.predictions_json[i], chunk_size=args.chunk_size)
-
-    print("\n전체 완료.")
-
-
-if __name__ == "__main__":
-    main()
