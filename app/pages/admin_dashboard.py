@@ -16,16 +16,29 @@ ERD(schema.sql)에 있는 테이블만으로 구현 가능한 기능만 남겨�
 에러 로그/API 실패 이력은 현재 스키마에 대응하는 테이블/컬럼이 없어 제외했습니다.
 (새 테이블·컬럼이 추가되면 다시 붙일 수 있습니다.)
 
-실제 DB 연동 부분은 TODO로 표시했고, 지금은 더미 데이터로 화면 흐름만 확인할 수 있습니다.
+DB 연결이 없거나 아직 쌓인 데이터가 없는 섹션은 화면 흐름 확인용 더미 데이터로 폴백합니다
+(각 폴백 지점에 TODO 주석 참고). 실제 관리자 로그인 세션 확인은 shared/auth.py를 재사용합니다.
 """
 
 import importlib.util
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import altair as alt
 import pandas as pd
 import streamlit as st
+
+# login.py/app.py와 동일한 이유(진입점 app/app.py의 파일명이 "app"이라 `app.shared...`
+# 형태의 import가 깨짐)로, app/ 폴더 자체를 sys.path에 넣고 "shared"를 최상위 이름으로
+# 바로 가져온다. shared.auth처럼 상대 import(from .db import ...)를 쓰는 모듈은 이 방식
+# (진짜 패키지 import)이어야 정상 동작하므로, db.py 전용 importlib 우회와는 별도로 둔다.
+_APP_DIR = str(Path(__file__).resolve().parents[1])
+if _APP_DIR in sys.path:
+    sys.path.remove(_APP_DIR)
+sys.path.insert(0, _APP_DIR)
+
+from shared import auth  # noqa: E402
 
 # app.shared.db를 일반 `from app.shared.db import ...`(또는 상대 import `from .db import ...`)로
 # 가져오면 깨진다: 이 프로젝트의 진입점이 app/app.py라서 Streamlit이 sys.path에 app/ 디렉터리를
@@ -40,6 +53,122 @@ def _load_db_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# ────────────────────────────────────────────────
+# DB 조회 헬퍼 (mypage.py의 get_*() 함수들과 동일한 컨벤션 —
+# DB 연결이 없으면 None, 연결은 됐지만 데이터가 없으면 빈 리스트를 반환해서
+# 호출부(init_session_state)가 폴백 여부를 판단하게 한다)
+# ────────────────────────────────────────────────
+def get_admin_users(limit: int = 500) -> list[dict] | None:
+    """users 기준 가입자 목록. store_name은 store_snapshots(최신 스냅샷)에서 매핑."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    from sqlalchemy import text
+
+    sql = text(
+        "SELECT u.user_id, u.login_id, u.user_type, u.store_id, u.created_at, "
+        "(SELECT ss.store_name FROM store_snapshots ss WHERE ss.store_id = u.store_id "
+        " ORDER BY ss.snapshot_date DESC LIMIT 1) AS store_name "
+        "FROM users u "
+        "ORDER BY u.created_at DESC "
+        "LIMIT :limit"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"limit": limit}).mappings().all()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["created_at"] = d["created_at"].strftime("%Y-%m-%d") if d["created_at"] else None
+        result.append(d)
+    return result
+
+
+def get_models() -> list[dict] | None:
+    """models 테이블 전체를 학습 시각 최신순으로."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    from sqlalchemy import text
+
+    sql = text(
+        "SELECT model_id, model_name, version, model_type, accuracy, precision_score, "
+        "recall_score, f1_score, roc_auc, trained_at, is_production "
+        "FROM models ORDER BY trained_at DESC"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql).mappings().all()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        for key in ("accuracy", "precision_score", "recall_score", "f1_score", "roc_auc"):
+            d[key] = float(d[key]) if d[key] is not None else None
+        d["trained_at"] = d["trained_at"].strftime("%Y-%m-%d %H:%M") if d["trained_at"] else None
+        d["is_production"] = bool(d["is_production"])
+        result.append(d)
+    return result
+
+
+def get_top_regions(limit: int = 5) -> list[dict] | None:
+    """population_features.total_pop_avg -> administrative_dongs 조인, 유동인구 상위 N개."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    from sqlalchemy import text
+
+    sql = text(
+        "SELECT d.dong_name, p.total_pop_avg "
+        "FROM population_features p "
+        "JOIN administrative_dongs d ON d.dong_code = p.dong_code "
+        "ORDER BY p.total_pop_avg DESC "
+        "LIMIT :limit"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"limit": limit}).all()
+    return [{"지역": r[0], "유동인구": float(r[1])} for r in rows]
+
+
+@st.cache_data(ttl=30)  # "오늘의 인기 키워드"는 30초마다 자동 갱신되는 화면이라 캐시도 그에 맞춤
+def get_trend_keywords(limit: int = 5) -> list[dict]:
+    """trend_keywords에서 최신 snapshot_date 기준 store_count 상위 N개. DB 연결이
+    없거나 아직 적재된 스냅샷이 없으면 빈 리스트(호출부가 데모 데이터로 폴백)."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return []
+
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        latest = conn.execute(text("SELECT MAX(snapshot_date) FROM trend_keywords")).scalar()
+        if latest is None:
+            return []
+        rows = conn.execute(
+            text(
+                "SELECT keyword, store_count, growth_rate FROM trend_keywords "
+                "WHERE snapshot_date = :latest "
+                "ORDER BY store_count DESC "
+                "LIMIT :limit"
+            ),
+            {"latest": latest, "limit": limit},
+        ).mappings().all()
+    return [
+        {
+            "keyword": r["keyword"],
+            "store_count": r["store_count"],
+            "growth_rate": float(r["growth_rate"]) if r["growth_rate"] is not None else None,
+        }
+        for r in rows
+    ]
 
 
 st.set_page_config(
@@ -113,121 +242,128 @@ def inject_custom_css():
 
 
 # ────────────────────────────────────────────────
-# 세션 상태 초기화 (더미 데이터)
-# TODO: 실제로는 관리자 로그인 세션 확인 후 각 섹션을 DB에서 조회
+# 더미 데이터 (DB 연결이 없거나 아직 쌓인 데이터가 없을 때의 화면 확인용 폴백)
+# ────────────────────────────────────────────────
+_DUMMY_ADMIN_USERS = [
+    {
+        "user_id": "u_0001",
+        "login_id": "parkminha76",
+        "user_type": "owner",
+        "store_id": "store_1042",
+        "store_name": "카페 온기",
+        "created_at": "2025-01-15",
+    },
+    {
+        "user_id": "u_0002",
+        "login_id": "founder_kim",
+        "user_type": "founder",
+        "store_id": None,
+        "store_name": None,
+        "created_at": "2025-03-02",
+    },
+    {
+        "user_id": "u_0003",
+        "login_id": "admin_lee",
+        "user_type": "admin",
+        "store_id": None,
+        "store_name": None,
+        "created_at": "2024-11-20",
+    },
+    {
+        "user_id": "u_0004",
+        "login_id": "test_user",
+        "user_type": "owner",
+        "store_id": "store_2091",
+        "store_name": "역삼 분식",
+        "created_at": "2025-06-10",
+    },
+    {
+        "user_id": "u_0005",
+        "login_id": "new_owner",
+        "user_type": "owner",
+        "store_id": "store_3087",
+        "store_name": "성수 베이커리",
+        "created_at": date.today().isoformat(),  # "오늘 가입" 데모용
+    },
+]
+
+_DUMMY_MODELS = [
+    {
+        "model_id": "lightgbm_v3",
+        "model_name": "LightGBM 폐업예측",
+        "version": "v3",
+        "model_type": "ML",
+        "accuracy": 0.891,
+        "precision_score": 0.870,
+        "recall_score": 0.850,
+        "f1_score": 0.860,
+        "roc_auc": 0.920,
+        "trained_at": "2026-08-15 10:00",
+        "is_production": True,
+    },
+    {
+        "model_id": "catboost_v2",
+        "model_name": "CatBoost 폐업예측",
+        "version": "v2",
+        "model_type": "ML",
+        "accuracy": 0.879,
+        "precision_score": 0.850,
+        "recall_score": 0.840,
+        "f1_score": 0.845,
+        "roc_auc": 0.905,
+        "trained_at": "2026-07-20 10:00",
+        "is_production": False,
+    },
+    {
+        "model_id": "mlp_v1",
+        "model_name": "MLP 폐업예측",
+        "version": "v1",
+        "model_type": "DL",
+        "accuracy": 0.862,
+        "precision_score": 0.830,
+        "recall_score": 0.810,
+        "f1_score": 0.820,
+        "roc_auc": 0.889,
+        "trained_at": "2026-06-01 10:00",
+        "is_production": False,
+    },
+]
+
+_DUMMY_TOP_REGIONS = [
+    {"지역": "여의동", "유동인구": 108739},
+    {"지역": "역삼1동", "유동인구": 108306},
+    {"지역": "화곡8동", "유동인구": 86418},
+    {"지역": "서교동", "유동인구": 84851},
+    {"지역": "서초3동", "유동인구": 70607},
+]
+
+_DUMMY_TREND_KEYWORDS = [
+    {"keyword": "무인카페", "store_count": 128, "growth_rate": 0.42},
+    {"keyword": "반려동물동반", "store_count": 96, "growth_rate": 0.31},
+    {"keyword": "회전초밥", "store_count": 87, "growth_rate": 0.12},
+    {"keyword": "저속노화식단", "store_count": 74, "growth_rate": 0.58},
+    {"keyword": "노키즈존", "store_count": 63, "growth_rate": -0.08},
+]
+
+
+# ────────────────────────────────────────────────
+# 세션 상태 초기화
+# 관리자 로그인 세션 확인은 main()에서 shared/auth.py로 처리하고, 여기서는 각 섹션을
+# DB에서 조회해 세션 상태를 채운다. trend_keywords는 30초마다 자동 갱신돼야 해서
+# session_state 캐싱 없이 render_trend_keywords()에서 매번 get_trend_keywords()를 부른다.
 # ────────────────────────────────────────────────
 def init_session_state():
     if "admin_users" not in st.session_state:
-        # users 테이블: user_id, login_id, user_type, store_id(owner만), created_at
-        # store_name은 users/stores에 없고 store_snapshots.store_name(최신 스냅샷)에서 조인해온다.
-        st.session_state.admin_users = [
-            {
-                "user_id": "u_0001",
-                "login_id": "parkminha76",
-                "user_type": "owner",
-                "store_id": "store_1042",
-                "store_name": "카페 온기",
-                "created_at": "2025-01-15",
-            },
-            {
-                "user_id": "u_0002",
-                "login_id": "founder_kim",
-                "user_type": "founder",
-                "store_id": None,
-                "store_name": None,
-                "created_at": "2025-03-02",
-            },
-            {
-                "user_id": "u_0003",
-                "login_id": "admin_lee",
-                "user_type": "admin",
-                "store_id": None,
-                "store_name": None,
-                "created_at": "2024-11-20",
-            },
-            {
-                "user_id": "u_0004",
-                "login_id": "test_user",
-                "user_type": "owner",
-                "store_id": "store_2091",
-                "store_name": "역삼 분식",
-                "created_at": "2025-06-10",
-            },
-            {
-                "user_id": "u_0005",
-                "login_id": "new_owner",
-                "user_type": "owner",
-                "store_id": "store_3087",
-                "store_name": "성수 베이커리",
-                "created_at": date.today().isoformat(),  # "오늘 가입" 데모용
-            },
-        ]
+        # TODO(데모용 임시 폴백): DB 연결이 없거나 가입자가 없으면 화면 확인용 더미로.
+        st.session_state.admin_users = get_admin_users() or _DUMMY_ADMIN_USERS
 
     if "models" not in st.session_state:
-        # models 테이블 기준
-        st.session_state.models = [
-            {
-                "model_id": "lightgbm_v3",
-                "model_name": "LightGBM 폐업예측",
-                "version": "v3",
-                "model_type": "ML",
-                "accuracy": 0.891,
-                "precision_score": 0.870,
-                "recall_score": 0.850,
-                "f1_score": 0.860,
-                "roc_auc": 0.920,
-                "trained_at": "2026-08-15 10:00",
-                "is_production": True,
-            },
-            {
-                "model_id": "catboost_v2",
-                "model_name": "CatBoost 폐업예측",
-                "version": "v2",
-                "model_type": "ML",
-                "accuracy": 0.879,
-                "precision_score": 0.850,
-                "recall_score": 0.840,
-                "f1_score": 0.845,
-                "roc_auc": 0.905,
-                "trained_at": "2026-07-20 10:00",
-                "is_production": False,
-            },
-            {
-                "model_id": "mlp_v1",
-                "model_name": "MLP 폐업예측",
-                "version": "v1",
-                "model_type": "DL",
-                "accuracy": 0.862,
-                "precision_score": 0.830,
-                "recall_score": 0.810,
-                "f1_score": 0.820,
-                "roc_auc": 0.889,
-                "trained_at": "2026-06-01 10:00",
-                "is_production": False,
-            },
-        ]
+        # TODO(데모용 임시 폴백): DB 연결이 없거나 등록된 모델이 없으면 화면 확인용 더미로.
+        st.session_state.models = get_models() or _DUMMY_MODELS
 
     if "top_regions" not in st.session_state:
-        # population_features.total_pop_avg JOIN administrative_dongs, 유동인구(평균 총 인구)
-        # 상위 5개 동. 아래 값은 실제 DB에서 조회한 상위 5개를 그대로 옮겨온 것.
-        st.session_state.top_regions = [
-            {"지역": "여의동", "유동인구": 108739},
-            {"지역": "역삼1동", "유동인구": 108306},
-            {"지역": "화곡8동", "유동인구": 86418},
-            {"지역": "서교동", "유동인구": 84851},
-            {"지역": "서초3동", "유동인구": 70607},
-        ]
-
-    if "trend_keywords" not in st.session_state:
-        # trend_keywords 테이블: keyword, snapshot_date, store_count, growth_rate
-        # (최신 snapshot_date 기준 store_count 상위 N개, growth_rate는 최초값이 0이면 NULL)
-        st.session_state.trend_keywords = [
-            {"keyword": "무인카페", "store_count": 128, "growth_rate": 0.42},
-            {"keyword": "반려동물동반", "store_count": 96, "growth_rate": 0.31},
-            {"keyword": "회전초밥", "store_count": 87, "growth_rate": 0.12},
-            {"keyword": "저속노화식단", "store_count": 74, "growth_rate": 0.58},
-            {"keyword": "노키즈존", "store_count": 63, "growth_rate": -0.08},
-        ]
+        # TODO(데모용 임시 폴백): DB 연결이 없으면 화면 확인용 더미로.
+        st.session_state.top_regions = get_top_regions() or _DUMMY_TOP_REGIONS
 
 
 # ────────────────────────────────────────────────
@@ -288,7 +424,9 @@ def render_trend_keywords():
         )
         st.caption(f"⏱️ 마지막 갱신: {datetime.now():%H:%M:%S}")
 
-        keywords = st.session_state.trend_keywords
+        # session_state에 한 번 캐싱해두면 30초 자동 갱신이 무의미해지므로, 매 프래그먼트
+        # 실행마다 get_trend_keywords()(자체 ttl=30 캐시)를 새로 부른다.
+        keywords = get_trend_keywords(limit=5) or _DUMMY_TREND_KEYWORDS
 
         for rank, kw in enumerate(keywords, start=1):
             rate = kw["growth_rate"]
@@ -522,6 +660,18 @@ def render_popular_query_regions():
 # 메인 레이아웃
 # ────────────────────────────────────────────────
 def main():
+    # 실제 관리자 로그인 세션 확인(shared/auth.py) — app.py의 ADMIN 분기, mypage.py의
+    # 로그인 가드와 동일한 방식. 관리자가 아니면 로그인 페이지로 안내하고 멈춘다.
+    user = auth.current_user()
+    if user is None:
+        st.warning("관리자 로그인이 필요한 페이지예요.")
+        st.page_link("pages/login.py", label="로그인하러 가기", icon="➡️")
+        st.stop()
+    if user["user_type"] != "admin":
+        st.warning("관리자 계정으로만 접근할 수 있어요.")
+        st.page_link("app.py", label="메인으로 이동", icon="➡️")
+        st.stop()
+
     init_session_state()
     inject_custom_css()
 
