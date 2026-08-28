@@ -1,22 +1,28 @@
-"""
-python src/project_2nd/db/etl/load_to_tidb.py
+"""TiDB 안전 적재/재개 도구.
 
-db/schema.sql로 테이블을 생성하고, data/features/*.csv를 순서대로 적재한다.
-순서는 FK 의존관계를 지켜야 한다 (참조되는 테이블이 먼저 채워져야 함).
+기본 실행은 기존 테이블과 데이터를 절대 삭제하지 않는다. 13개 테이블이 모두
+존재하는지 확인한 뒤, data/features/*.csv와 DB 행 수를 비교해 미완료 구간만
+이어 적재한다. 전체 초기화는 사용자가 명시적으로 ``--reset``을 지정했을 때만
+허용한다.
 
 실행 전:
   1. .env.example을 .env로 복사하고 TiDB Cloud 연결 정보 채우기
   2. pip install pymysql sqlalchemy python-dotenv cryptography
   3. data/features/ 에 CSV들이 이미 만들어져 있어야 함 (run_pipeline.sh 먼저 실행)
 
-실행: python db/etl/03_load_to_tidb.py
+실행:
+  python src/project_2nd/db/etl/load_to_tidb.py          # 안전 재개(기본)
+  python src/project_2nd/db/etl/load_to_tidb.py --reset  # 전체 삭제 후 재적재(명시적)
 """
+import argparse
+import hashlib
+import re
 import sys
-import os
 import time
 import pathlib
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
 import pandas as pd
-from sqlalchemy import text
 
 # 이 파일 실제 경로: <project_root>/src/project_2nd/db/etl/load_to_tidb.py
 _ETL_DIR = pathlib.Path(__file__).resolve().parent   # .../src/project_2nd/db/etl
@@ -34,13 +40,75 @@ SCHEMA_PATH = str(_DB_DIR / 'schema.sql')
 FEATURES_DIR = str(_PROJECT_ROOT / 'data' / 'features')
 
 
-# 13개 테이블 전체. DROP은 FK 체크를 꺼놓고 하니 순서 상관없음.
+# 스키마에 반드시 있어야 하는 13개 테이블.
 _ALL_TABLES = [
     'administrative_dongs', 'industries', 'stores', 'store_snapshots',
     'population_features', 'spatial_density_features', 'trend_keywords',
     'industry_transitions', 'industry_survival_stats',
     'users', 'models', 'predictions', 'support_actions',
 ]
+
+_OPERATING_TABLES = {'users', 'models', 'predictions', 'support_actions'}
+_RESUMABLE_LARGE_TABLES = {'store_snapshots', 'spatial_density_features'}
+
+# DB에서 AUTO_INCREMENT 컬럼을 제외하고 비교할 실제 적재 컬럼. 이 순서는
+# 내용 시그니처의 일부이므로 변경하지 않는다.
+_TABLE_COLUMNS = {
+    'administrative_dongs': ['dong_code', 'dong_name', 'gu_name'],
+    'industries': [
+        'industry_code', 'industry_name', 'industry_jung_code',
+        'industry_jung_name', 'industry_dae_code', 'custom_group',
+    ],
+    'stores': [
+        'store_id', 'current_industry_code', 'dong_code',
+        'first_seen_snapshot', 'last_seen_snapshot', 'n_snapshots_observed',
+        'is_closed', 'had_temporary_gap',
+    ],
+    'store_snapshots': [
+        'store_id', 'snapshot_date', 'industry_code', 'dong_code', 'store_name',
+        'floor_category', 'lng', 'lat', 'is_closed_next',
+        'transitioned_next', 'label_available',
+    ],
+    'population_features': [
+        'dong_code', 'korean_pop', 'foreign_long_pop', 'foreign_short_pop',
+        'total_pop_avg', 'foreign_short_ratio', 'tourist_zone_candidate',
+    ],
+    'spatial_density_features': [
+        'store_id', 'snapshot_date', 'same_industry_count_300m',
+        'total_count_300m', 'nearest_same_industry_distance_m',
+        'dong_industry_count', 'coord_cluster_size',
+    ],
+    'trend_keywords': ['keyword', 'snapshot_date', 'store_count', 'growth_rate'],
+    'industry_transitions': [
+        'store_id', 'from_snapshot', 'to_snapshot',
+        'from_industry_code', 'to_industry_code',
+    ],
+    'industry_survival_stats': [
+        'from_industry_code', 'to_industry_code', 'sample_size', 'survival_rate',
+    ],
+}
+
+_BOOLEAN_COLUMNS = {
+    'is_closed', 'had_temporary_gap', 'is_closed_next', 'transitioned_next',
+    'label_available', 'tourist_zone_candidate',
+}
+_INTEGER_COLUMNS = {
+    'n_snapshots_observed', 'same_industry_count_300m', 'total_count_300m',
+    'dong_industry_count', 'coord_cluster_size', 'store_count', 'sample_size',
+}
+_DECIMAL_SCALES = {
+    'lng': 7,
+    'lat': 7,
+    'korean_pop': 4,
+    'foreign_long_pop': 4,
+    'foreign_short_pop': 4,
+    'total_pop_avg': 4,
+    'foreign_short_ratio': 5,
+    'nearest_same_industry_distance_m': 3,
+    'growth_rate': 4,
+    'survival_rate': 5,
+}
+_SIGNATURE_MODULUS = 1 << 256
 
 
 def _strip_sql_line_comments(sql):
@@ -52,8 +120,180 @@ def _strip_sql_line_comments(sql):
     return '\n'.join(line[:line.find('--')] if '--' in line else line for line in sql.splitlines())
 
 
-def create_tables(engine):
-    print("스키마 생성 중...")
+def _existing_tables(engine):
+    with engine.connect() as conn:
+        rows = conn.exec_driver_sql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = DATABASE()"
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _verify_required_tables(engine):
+    """기본 실행에서 DDL을 수행하지 않고 13개 테이블 존재만 검증한다."""
+    missing = set(_ALL_TABLES) - _existing_tables(engine)
+    if missing:
+        raise RuntimeError(
+            "필수 TiDB 테이블이 없어 안전 재개를 중단합니다: "
+            f"{sorted(missing)}. 빈 DB를 처음 구성하려는 경우에만 --reset을 "
+            "명시적으로 사용하세요."
+        )
+    print("스키마 확인 완료: 필수 13개 테이블이 모두 존재합니다 (변경 없음).")
+
+
+def _table_row_count(engine, table_name):
+    if table_name not in _ALL_TABLES:
+        raise ValueError(f"허용되지 않은 테이블 이름: {table_name}")
+    with engine.connect() as conn:
+        return int(conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table_name}").scalar())
+
+
+def _canonical_value(column, value):
+    """CSV와 DB 타입 차이를 없애 내용 시그니처를 같은 형태로 만든다."""
+    if value is None or (not isinstance(value, (list, tuple, dict)) and pd.isna(value)):
+        return r'\N'
+    if isinstance(value, bytes):
+        value = value.decode('utf-8')
+    if column in _BOOLEAN_COLUMNS:
+        normalized = str(value).strip().lower()
+        if normalized in {'1', '1.0', 'true', 't', 'yes'}:
+            return '1'
+        if normalized in {'0', '0.0', 'false', 'f', 'no'}:
+            return '0'
+        raise ValueError(f"{column}의 boolean 값을 해석할 수 없습니다: {value!r}")
+    if column in _INTEGER_COLUMNS:
+        try:
+            return str(int(Decimal(str(value))))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError(f"{column}의 정수 값을 해석할 수 없습니다: {value!r}") from exc
+    if column in _DECIMAL_SCALES:
+        scale = _DECIMAL_SCALES[column]
+        try:
+            quantized = Decimal(str(value)).quantize(
+                Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP
+            )
+        except InvalidOperation as exc:
+            raise ValueError(f"{column}의 소수 값을 해석할 수 없습니다: {value!r}") from exc
+        return f"{quantized:.{scale}f}"
+    return str(value)
+
+
+def _new_signature():
+    return [0, 0, 0]  # 행 수, SHA256 정수 합, SHA256 정수 XOR
+
+
+def _update_signature(signature, rows, columns):
+    for row in rows:
+        digest = hashlib.sha256()
+        for column, value in zip(columns, row):
+            encoded = _canonical_value(column, value).encode('utf-8')
+            digest.update(len(encoded).to_bytes(4, 'big'))
+            digest.update(encoded)
+        number = int.from_bytes(digest.digest(), 'big')
+        signature[0] += 1
+        signature[1] = (signature[1] + number) % _SIGNATURE_MODULUS
+        signature[2] ^= number
+    return signature
+
+
+def _frame_signature(df, columns):
+    return tuple(_update_signature(
+        _new_signature(), df.loc[:, columns].itertuples(index=False, name=None), columns
+    ))
+
+
+def _chunks_signature(chunks, columns, limit=None):
+    signature = _new_signature()
+    remaining = limit
+    for chunk in chunks:
+        if remaining is not None:
+            if remaining <= 0:
+                break
+            chunk = chunk.iloc[:remaining]
+            remaining -= len(chunk)
+        _update_signature(
+            signature,
+            chunk.loc[:, columns].itertuples(index=False, name=None),
+            columns,
+        )
+    if limit is not None and signature[0] != limit:
+        raise RuntimeError(
+            f"CSV prefix 요청 {limit:,}행보다 실제 읽은 행이 적습니다: {signature[0]:,}행"
+        )
+    return tuple(signature)
+
+
+def _db_signature(engine, table_name, columns):
+    if table_name not in _TABLE_COLUMNS or list(columns) != _TABLE_COLUMNS[table_name]:
+        raise ValueError(f"{table_name} 시그니처 컬럼 정의가 올바르지 않습니다.")
+    signature = _new_signature()
+    select_columns = ', '.join(f"`{column}`" for column in columns)
+    with engine.connect() as raw_conn:
+        conn = raw_conn.execution_options(stream_results=True)
+        result = conn.exec_driver_sql(f"SELECT {select_columns} FROM `{table_name}`")
+        while True:
+            rows = result.fetchmany(10_000)
+            if not rows:
+                break
+            _update_signature(signature, rows, columns)
+    return tuple(signature)
+
+
+def _assert_same_signature(table_name, source_signature, db_signature, scope='전체'):
+    if source_signature != db_signature:
+        raise RuntimeError(
+            f"{table_name} {scope} 내용이 현재 CSV와 다릅니다. 자동 적재/재개를 "
+            "중단합니다. 기존 데이터를 삭제하거나 덮어쓰지 않았습니다."
+        )
+
+
+def _load_or_skip_dataframe(engine, table_name, df, *, dry_run=False):
+    """작은 테이블: 0행이면 적재, 완전 일치면 skip, 부분/불일치면 중단."""
+    columns = _TABLE_COLUMNS[table_name]
+    df = df.loc[:, columns]
+    expected = len(df)
+    actual = _table_row_count(engine, table_name)
+    print(f"{table_name}: CSV {expected:,}행 / DB {actual:,}행")
+
+    if actual == expected:
+        source_signature = _frame_signature(df, columns)
+        db_signature = _db_signature(engine, table_name, columns)
+        _assert_same_signature(table_name, source_signature, db_signature)
+        print(f"  완료 내용 일치 — 건너뜀")
+        return
+    if actual != 0:
+        extra = (
+            "industry_transitions에는 자연키 UNIQUE가 없어 부분 재개가 불가능합니다."
+            if table_name == 'industry_transitions'
+            else "부분 상태는 자동 보정하지 않습니다."
+        )
+        raise RuntimeError(
+            f"{table_name}: DB {actual:,}행, CSV {expected:,}행. {extra} "
+            "기존 데이터를 변경하지 않고 중단합니다."
+        )
+    if dry_run:
+        print(f"  [DRY-RUN] {expected:,}행을 새로 적재할 예정")
+        return
+
+    _to_sql_with_retry(df, table_name, engine, if_exists='append', index=False)
+    _assert_same_signature(
+        table_name, _frame_signature(df, columns),
+        _db_signature(engine, table_name, columns),
+    )
+    print(f"  {expected:,}행 적재 및 내용 검증 완료")
+
+
+def create_tables(engine, *, reset=False):
+    """``reset=True``일 때만 모든 테이블을 삭제하고 다시 만든다.
+
+    기본값은 삭제 금지다. 기존 호출부가 인자를 빠뜨려도 안전하도록, reset=False면
+    DDL 대신 필수 테이블 존재 검증만 수행한다.
+    """
+    if not reset:
+        _verify_required_tables(engine)
+        return
+
+    print("⚠️ --reset 지정됨: 기존 13개 테이블 삭제 후 스키마를 다시 생성합니다.")
     with open(SCHEMA_PATH, encoding='utf-8') as f:
         sql = f.read()
     sql = _strip_sql_line_comments(sql)
@@ -70,12 +310,7 @@ def create_tables(engine):
         # exec_driver_sql은 그런 파싱 없이 SQL 문자열을 그대로 드라이버에 넘김.
         conn.exec_driver_sql("SET FOREIGN_KEY_CHECKS=0")
 
-        # 이 스크립트는 "처음부터 새로 채우기" 용도라 매번 싹 지우고 다시 만듦.
-        # (직전 실행이 stores 만들다 실패해서 administrative_dongs/industries가
-        #  이미 존재하는 상태였는데, DROP 없이 그냥 다시 돌리면 "table already
-        #  exists"로 또 실패함 — 그래서 먼저 다 지움.)
-        # ⚠️ 이미 넣어둔 실제 데이터(운영 데이터 포함)가 있다면 이 스크립트를
-        # 다시 돌리는 순간 전부 날아가니 주의.
+        # DROP은 위의 reset=True 분기를 통과한 경우에만 도달한다.
         for table in reversed(_ALL_TABLES):
             conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
 
@@ -360,23 +595,14 @@ def load_industry_survival_stats(engine):
 
 
 if __name__ == '__main__':
-    engine = get_engine()
-
-    create_tables(engine)
-    _wait_for_schema_visible(engine, _ALL_TABLES)
-
-    # FK 의존관계 순서: 참조되는 테이블 먼저
-    load_administrative_dongs(engine)
-    load_industries(engine)
-    load_stores(engine)
-    load_store_snapshots(engine)
-    load_population_features(engine)
-    load_spatial_density_features(engine)
-    load_trend_keywords(engine)
-    load_industry_transitions(engine)
-    load_industry_survival_stats(engine)
-
-    # users, models, predictions, support_actions는 앱 실행 중 생성되는 운영 데이터라
-    # 여기서는 적재하지 않는다 (테이블만 미리 생성해둠).
-
-    print("\n전체 적재 완료.")
+    # 안전장치: 이 레거시 전체 적재기는 테이블 DROP 및 append를 수행하므로,
+    # 현재 일부/전체 적재된 TiDB에 다시 실행하면 운영 데이터 삭제 또는 중복 적재가
+    # 발생할 수 있다. 따라서 어떤 인수로 실행해도 DB에 연결하거나 쓰지 않는다.
+    # 안전한 현황 점검/재개는 전용 스크립트만 사용한다.
+    print(
+        "안전 중단: load_to_tidb.py의 전체 초기화/append 실행은 비활성화되어 있습니다.\n"
+        "읽기 전용 점검: python src/project_2nd/db/etl/resume_tidb_current.py\n"
+        "검증 후 안전 재개: python src/project_2nd/db/etl/resume_tidb_current.py --execute\n"
+        "이 스크립트에서는 --execute, --reset 등 어떤 인수도 DB 쓰기를 허용하지 않습니다."
+    )
+    raise SystemExit(2)

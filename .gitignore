@@ -47,6 +47,9 @@ output/
 results/
 experiments/
 
+# Generated DB import payloads from model/SHAP runs
+src/project_2nd/models/dl/**/shap/db_payload/
+
 # =========================================================
 # Model Weights / Checkpoints
 # =========================================================

@@ -1,0 +1,13 @@
+{
+  "model_name": "JB_DL_pjw_MLP_DNN",
+  "seed": 42,
+  "epochs": 7,
+  "batch_size": 4096,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "dropout": 0.3,
+  "early_stopping_patience": 2,
+  "train_folds": [0, 1, 2],
+  "validation_folds": [3],
+  "test_folds": [4]
+}
