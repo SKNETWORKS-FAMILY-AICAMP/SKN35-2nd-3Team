@@ -1,0 +1,240 @@
+# -*- coding: utf-8 -*-
+"""
+train_and_evaluate_real.py
+
+가짜 데이터가 아니라 실제 modeling_dataset_refined_pjw.csv(pjw 팀원 전처리본)로
+LogisticRegression/RandomForest/LightGBM 3개를 학습·평가한다.
+
+가짜 데이터 버전(train_and_evaluate.py)과 다른 점:
+  - 컬럼 구성이 실제 스키마 기준 (dong_code 없음, industry_jung_name/industry_name은
+    industry_jung_code/industry_code와 1:1 중복이라 제외, is_mass_reclass_window /
+    is_left_censored_age / is_trend_keyword_match / industry_specialization_300m /
+    competition_per_capita_300m / dong_industry_count_growth 는 pjw가 추가한 신규 피처)
+  - 1,889,582행(positive_rate=10.65%)짜리 대용량이라 SAMPLE_ROWS로 먼저 표본만
+    돌려보고, 전체 실행은 따로 판단한다.
+
+출력: results/benchmark_results_real.csv
+"""
+import sys
+import time
+import warnings
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except AttributeError:
+    pass
+
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+import lightgbm as lgb
+
+warnings.filterwarnings("ignore")
+
+IN_PATH = r"C:\Users\playdata2\Downloads\modeling_dataset_refined_pjw.csv"
+OUT_PATH = "results/benchmark_results_real_full.csv"
+
+TARGET = "is_closed_next"
+FOLD_COL = "fold"
+
+# 식별자·라벨 시점 정보만 제외 — 정답 직접 노출 컬럼(transitioned_next 등)은
+# 이 스키마엔 아예 없음(pjw가 이미 뺀 상태로 보임).
+EXCLUDE_COLS = {"snapshot_date", "store_id", "fold", TARGET}
+
+# industry_jung_name/industry_name은 industry_jung_code/industry_code와 카디널리티가
+# 완전히 같은(53개/192개) 1:1 중복 컬럼이라(코드->이름 매핑일 뿐) 제외 — 넣어봤자
+# 원핫 차원만 두 배로 늘고 정보는 그대로.
+CATEGORICAL_COLS = ["industry_dae_code", "industry_group", "industry_jung_code",
+                    "industry_code", "gu_name", "floor_category"]
+
+SAMPLE_ROWS = None  # 전체(1,889,582행) 실행 — 표본 검증은 이미 끝남
+SAMPLE_FRAC = SAMPLE_ROWS / 1_889_582 if SAMPLE_ROWS else None
+CHUNK = 300_000
+
+
+def load_data(path, sample_frac=None, chunksize=CHUNK):
+    all_cols = None
+    parts = []
+    total = 0
+    rng = np.random.default_rng(42)
+    for chunk in pd.read_csv(path, dtype={"snapshot_date": str, "store_id": str}, chunksize=chunksize):
+        total += len(chunk)
+        if sample_frac is not None:
+            mask = rng.random(len(chunk)) < sample_frac
+            chunk = chunk.loc[mask]
+        parts.append(chunk)
+        print(f"      ...읽는 중: 누적 {total:,}행 (표본 {sum(len(p) for p in parts):,}행)")
+    df = pd.concat(parts, ignore_index=True)
+
+    feature_cols = [c for c in df.columns if c not in EXCLUDE_COLS
+                    and c not in ("industry_jung_name", "industry_name")]
+    numeric_cols = [c for c in feature_cols if c not in CATEGORICAL_COLS]
+    for c in CATEGORICAL_COLS:
+        df[c] = df[c].fillna("결측")
+    return df, feature_cols, numeric_cols
+
+
+def make_logreg_pipeline(numeric_cols, categorical_cols):
+    num_pipe = Pipeline([("impute", SimpleImputer(strategy="median")), ("scale", StandardScaler())])
+    pre = ColumnTransformer(
+        transformers=[
+            ("num", num_pipe, numeric_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+        ]
+    )
+    return Pipeline(
+        [("pre", pre), ("clf", LogisticRegression(max_iter=2000, class_weight="balanced"))]
+    )
+
+
+def make_rf_pipeline(numeric_cols, categorical_cols):
+    num_pipe = SimpleImputer(strategy="median")
+    pre = ColumnTransformer(
+        transformers=[
+            ("num", num_pipe, numeric_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+        ]
+    )
+    return Pipeline(
+        [
+            ("pre", pre),
+            (
+                "clf",
+                RandomForestClassifier(
+                    n_estimators=200,
+                    max_depth=None,
+                    min_samples_leaf=5,
+                    class_weight="balanced",
+                    n_jobs=-1,
+                    random_state=42,
+                ),
+            ),
+        ]
+    )
+
+
+def prep_for_lightgbm(df, categorical_cols):
+    df = df.copy()
+    for c in categorical_cols:
+        df[c] = df[c].astype("category")
+    return df
+
+
+def eval_fold(y_true, y_prob, threshold=0.5):
+    y_pred = (y_prob >= threshold).astype(int)
+    return {
+        "PR-AUC": average_precision_score(y_true, y_prob),
+        "ROC-AUC": roc_auc_score(y_true, y_prob),
+        "Precision": precision_score(y_true, y_pred, zero_division=0),
+        "Recall": recall_score(y_true, y_pred, zero_division=0),
+        "F1": f1_score(y_true, y_pred, zero_division=0),
+        "Brier": brier_score_loss(y_true, y_prob),
+    }
+
+
+def run_cv(name, df, feature_cols, numeric_cols, categorical_cols, model_kind):
+    fold_ids = sorted(df[FOLD_COL].unique())
+    fold_metrics = []
+    t0 = time.time()
+
+    for k in fold_ids:
+        train_df = df[df[FOLD_COL] != k]
+        test_df = df[df[FOLD_COL] == k]
+        y_train = train_df[TARGET].values
+        y_test = test_df[TARGET].values
+
+        if model_kind == "logreg":
+            model = make_logreg_pipeline(numeric_cols, categorical_cols)
+            model.fit(train_df[feature_cols], y_train)
+            y_prob = model.predict_proba(test_df[feature_cols])[:, 1]
+
+        elif model_kind == "rf":
+            model = make_rf_pipeline(numeric_cols, categorical_cols)
+            model.fit(train_df[feature_cols], y_train)
+            y_prob = model.predict_proba(test_df[feature_cols])[:, 1]
+
+        elif model_kind == "lightgbm":
+            train_lgb = prep_for_lightgbm(train_df[feature_cols], categorical_cols)
+            test_lgb = prep_for_lightgbm(test_df[feature_cols], categorical_cols)
+            pos = y_train.sum()
+            neg = len(y_train) - pos
+            scale_pos_weight = neg / max(pos, 1)
+            model = lgb.LGBMClassifier(
+                n_estimators=300,
+                learning_rate=0.05,
+                num_leaves=31,
+                scale_pos_weight=scale_pos_weight,
+                random_state=42,
+                verbosity=-1,
+            )
+            model.fit(train_lgb, y_train, categorical_feature=categorical_cols)
+            y_prob = model.predict_proba(test_lgb)[:, 1]
+
+        else:
+            raise ValueError(model_kind)
+
+        fold_metrics.append(eval_fold(y_test, y_prob))
+        print(f"        fold {k} 완료")
+
+    elapsed_min = (time.time() - t0) / 60
+    metrics_df = pd.DataFrame(fold_metrics)
+    summary = metrics_df.mean().to_dict()
+    summary["안정성(0~100)"] = float(max(0.0, 100 - metrics_df["PR-AUC"].std() * 500))
+    summary["학습시간(분)"] = elapsed_min
+    summary["모델"] = name
+    return summary, metrics_df
+
+
+def main():
+    print(f"[1/3] 데이터 로드: {IN_PATH}")
+    if SAMPLE_ROWS:
+        print(f"      표본만 사용: 약 {SAMPLE_ROWS:,}행 (전체 1,889,582행 중 {SAMPLE_FRAC:.1%})")
+    df, feature_cols, numeric_cols = load_data(IN_PATH, sample_frac=SAMPLE_FRAC)
+    print(f"      실제 로드된 행={len(df):,}  features={len(feature_cols)}  "
+          f"positive_rate={df[TARGET].mean():.4f}  folds={sorted(df[FOLD_COL].unique())}")
+
+    print("[2/3] 3개 모델 학습 (5-fold 교차검증) ...")
+    results = []
+    for name, kind in [
+        ("LogisticRegression", "logreg"),
+        ("RandomForestClassifier", "rf"),
+        ("LightGBM", "lightgbm"),
+    ]:
+        print(f"      - {name} 학습 중...")
+        summary, fold_df = run_cv(name, df, feature_cols, numeric_cols, CATEGORICAL_COLS, kind)
+        results.append(summary)
+        print(
+            f"        PR-AUC={summary['PR-AUC']:.4f}  ROC-AUC={summary['ROC-AUC']:.4f}  "
+            f"Precision={summary['Precision']:.4f}  Recall={summary['Recall']:.4f}  "
+            f"F1={summary['F1']:.4f}  Brier={summary['Brier']:.4f}  "
+            f"({summary['학습시간(분)']:.2f}분)"
+        )
+
+    result_df = pd.DataFrame(results)
+    col_order = ["모델", "PR-AUC", "ROC-AUC", "Precision", "Recall", "F1", "Brier",
+                 "안정성(0~100)", "학습시간(분)"]
+    result_df = result_df[col_order]
+
+    print("\n[3/3] 결과 요약 (실제 데이터 표본 기준)")
+    print(result_df.to_string(index=False))
+
+    result_df.to_csv(OUT_PATH, index=False, encoding="utf-8-sig")
+    print(f"\n저장 완료: {OUT_PATH}")
+
+
+if __name__ == "__main__":
+    main()
