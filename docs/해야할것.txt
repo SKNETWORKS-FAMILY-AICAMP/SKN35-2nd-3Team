@@ -1,11 +1,4 @@
-users	로그인/회원가입 로직이 아직 없어서
-models	학습된 모델을 레지스트리에 등록하는 코드가 아직 없어서
-predictions	예측 요청 처리 + SHAP 계산 로직이 아직 없어서
-support_actions	관리자 조치 입력 폼/저장 로직이 아직 없어서
-
-
-순서	무엇을 먼저 만들어야 하나	왜
-users	로그인/회원가입 로직	독립적으로 먼저 해도 됨
-models	로그인이랑 상관없이, 학습된 모델을 등록하는 코드만 있으면 됨	models 테이블은 users를 참조 안 해요 — 그냥 "모델 학습 끝나면 레지스트리에 기록"하는 거라 로그인 시스템이랑 무관하게 병렬로 진행 가능해요
-predictions	models가 먼저 있어야 함 (FK 필수)	predictions.model_id가 NOT NULL FK라 모델이 레지스트리에 등록돼 있어야 예측 로그를 남길 수 있어요. 반면 predictions.user_id는 nullable이라 로그인 시스템이 아직 없어도 익명 조회로는 동작 가능해요 (다만 "누가 조회했는지" 추적하려면 결국 users가 있는 게 낫긴 해요)
-support_actions	users(그중에서도 관리자 계정)가 먼저 있어야 함	
+create_dong_view 아직 안 됐음
+각자 json 파일 어디서 저장할지
+write_model로 한번에 저장 가능하게끔
+클릭하면은 클릭 카운트 쌓이게(owner, founder), 관리자는 한번에 보여줄 수 있게
