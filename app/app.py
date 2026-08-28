@@ -79,6 +79,44 @@ def _dong_name_map() -> dict:
 
 
 @st.cache_data(ttl=3600)
+def _industry_name_map() -> dict:
+    engine = get_engine()
+    if engine is None:
+        return {}
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT industry_code, industry_name FROM industries")
+        ).mappings().all()
+    return {r["industry_code"]: r["industry_name"] for r in rows}
+
+
+@st.cache_data(ttl=3600)
+def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list[dict]:
+    """업종전환 추천(2026-08-28 추가): industry_survival_stats에서 현재 업종(from) 기준
+    생존율(survival_rate) 높은 순으로 전환 후보(to)를 뽑는다. 3-2 문서 규칙대로 모델링
+    제외 업종군(과학·기술/부동산/시설관리·임대)은 전환 "목적지"로 추천하면 안 되므로
+    industries.custom_group으로 걸러낸다(ui.is_excluded_industry 재사용)."""
+    engine = get_engine()
+    if engine is None:
+        return []
+    sql = text(
+        """
+        SELECT s.to_industry_code, i.industry_name, i.custom_group,
+               s.survival_rate, s.sample_size
+        FROM industry_survival_stats s
+        JOIN industries i ON i.industry_code = s.to_industry_code
+        WHERE s.from_industry_code = :industry_code
+          AND s.to_industry_code != :industry_code
+        ORDER BY s.survival_rate DESC
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"industry_code": industry_code}).mappings().all()
+    recs = [dict(r) for r in rows if not ui.is_excluded_industry(r["custom_group"])]
+    return recs[:top_n]
+
+
+@st.cache_data(ttl=3600)
 def _dong_survival_proxy() -> list[dict]:
     """동별 대표 좌표 + 실측 생존율(임시 대체값, 모듈 docstring 참고).
     store_snapshots 하나만 GROUP BY하는 단일 집계 쿼리라 수백만 행이어도
@@ -610,11 +648,28 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
             ]
         ui.score_card("내 업종 생존점수", score, shap_lines=shap_lines)
     else:
-        st.info("아직 우리 가게 분석 결과가 없어요. (모델 연동 후 자동으로 계산돼요)")
+        # 모델이 아직 앱에 연동되지 않아 predictions가 비어있는 동안은 안내 문구 없이
+        # 공란으로 둔다(2026-08-28 사용자 요청: "shap이나 모델 데이터로 못하는건
+        # 공란으로 해줘 어차피 들어가니까") — 모델 연동되면 pred가 채워지면서 위
+        # score_card 분기로 자동 전환됨.
+        pass
 
     st.subheader("업종전환 추천")
-    st.caption("준비 중이에요 — industry_survival_stats 기반 추천 로직은 다음 단계에서 붙일 예정이에요.")
-    ui.short_term_switch_caveat()
+    names = _industry_name_map()
+    current_name = names.get(snapshot["industry_code"], snapshot["industry_code"])
+    st.caption(f"현재 업종: {current_name}")
+    recs = _industry_switch_recommendations(snapshot["industry_code"], top_n=3)
+    if recs:
+        for r in recs:
+            switch_score = round(float(r["survival_rate"]) * 100)
+            ui.score_card(
+                title=r["industry_name"],
+                survival_score=switch_score,
+                extra_caveat=f"표본 {r['sample_size']}건 기준",
+            )
+        ui.short_term_switch_caveat()
+    else:
+        st.info("이 업종에 대한 전환 통계가 아직 없어요.")
 
 
 def _render_region_detail_panel(clicked: dict):
@@ -640,52 +695,84 @@ def _render_region_detail_panel(clicked: dict):
     if pop:
         st.caption(f"유동인구 평균 {pop['total_pop_avg']:.0f}명")
 
-    st.info(
-        "업종별 생존점수 랭킹은 아직 준비 중이에요. "
-        "(전체 업종 배치 추론이 필요 — ui-logic.md 4번 참고)"
+    # 업종별 생존점수 랭킹(ui-logic.md 4번)은 전체 업종 배치 추론(모델)이 필요해서
+    # 아직 못 채움 — 안내 문구 없이 공란으로 둔다(2026-08-28 사용자 요청: "shap이나
+    # 모델 데이터로 못하는건 공란으로 해줘 어차피 들어가니까").
+
+
+# ---------------------------------------------------------------
+# 레이아웃(사이드바 제거 + 상단 헤더) — 사용자가 첨부한 목업 4장처럼
+# "사이드바 빼고 저 사진 마냥 배치"해달라는 요청(2026-08-28) 반영.
+#
+# 주의: Streamlit 기본 헤더 툴바([data-testid="stHeader"], Deploy 메뉴가 있는
+# 그 흰 바)는 position:absolute + z-index:999990짜리 오버레이라서, 우리가
+# 만든 상단 헤더 행이 페이지 맨 위(0~60px)에 있으면 그 뒤에 가려서 안 보인다
+# (버튼은 DOM엔 있는데 화면엔 안 뜨는 상태 — 실제로 스크린샷 찍어서 좌표까지
+# 확인함). 그래서 기본 헤더를 아예 display:none으로 죽이고 우리 헤더로
+# 대체한다.
+# ---------------------------------------------------------------
+def _inject_layout_css():
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] { display: none; }
+        [data-testid="stSidebarCollapseButton"] { display: none; }
+        [data-testid="stHeader"] { display: none; }
+        .stApp { background-color: #f5f6f8; }
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding-top: 1.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
 
-# ---------------------------------------------------------------
-# 사이드바 로그인
-# ---------------------------------------------------------------
-def _render_sidebar_auth():
-    """app.py는 메인 화면(지도+패널)만 보여준다 — 로그인/회원가입 입력 폼은
-    pages/login.py로 분리했음(사용자 요청, 2026-08-27). 여기서는 로그인
-    상태 표시 + 이동 링크만 담당한다."""
-    with st.sidebar:
-        if auth.is_logged_in():
-            user = auth.current_user()
+def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None):
+    """예전엔 로그인 상태를 사이드바에 표시했는데(2026-08-27), 사이드바 자체를
+    없애면서(2026-08-28) 상단 헤더 행으로 옮겼다. 마이페이지는 여전히 링크하지
+    않는다 — 다른 팀원이 작업 중이라 경로가 안정적이지 않다는 이유는 그대로다
+    (11차 변경 사유 참고)."""
+    col_brand, col_auth = st.columns([8, 2])
+    with col_brand:
+        st.markdown("### 📍 서울 상권 폐업예측")
+    with col_auth:
+        if mode == "GUEST":
+            st.page_link("pages/login.py", label="로그인", icon="➡️")
+        else:
             label = {"owner": "기존점주", "founder": "예비창업자", "admin": "관리자"}.get(
                 user["user_type"], user["user_type"]
             )
-            st.success(f"{label}로 로그인됨 ({user['login_id']})")
-            st.page_link("pages/my_page.py", label="마이페이지")
-            if st.button("로그아웃"):
+            # 기존점주는 login_id가 가게 코드(예: MA0101...)라 그대로 보여주면 사용자가
+            # 못 알아봄 — 매장이름으로 대신 표시(2026-08-28 요청).
+            display_name = user["login_id"]
+            if user["user_type"] == "owner" and owner_snapshot and owner_snapshot.get("store_name"):
+                display_name = owner_snapshot["store_name"]
+            st.caption(f"{label} · {display_name}")
+            if st.button("로그아웃", key="top_logout"):
                 auth.logout()
                 st.rerun()
-            if user["user_type"] == "admin":
-                st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동")
-        else:
-            st.page_link("pages/login.py", label="로그인 / 회원가입")
+    if mode == "ADMIN":
+        st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동", icon="➡️")
 
 
 # ---------------------------------------------------------------
 # 메인
 # ---------------------------------------------------------------
 def main():
-    _render_sidebar_auth()
+    _inject_layout_css()
     mode = auth.get_screen_mode()
+    user = auth.current_user()
+    owner_snapshot = _owner_latest_snapshot(user["store_id"]) if mode == "OWNER" else None
 
+    _render_top_header(mode, user, owner_snapshot)
     st.title("서울 상권 폐업예측")
 
     if mode == "ADMIN":
-        st.info("관리자 계정으로 로그인하셨어요. 좌측에서 관리자 대시보드로 이동해주세요.")
-        st.page_link("pages/admin_dashboard.py", label="관리자 대시보드 열기", icon="➡️")
+        st.info("관리자 계정으로 로그인하셨어요. 위에서 관리자 대시보드로 이동해주세요.")
         return
-
-    user = auth.current_user()
-    owner_snapshot = _owner_latest_snapshot(user["store_id"]) if mode == "OWNER" else None
 
     if "region_click" not in st.session_state:
         st.session_state["region_click"] = None
@@ -714,6 +801,12 @@ def main():
         if mode == "OWNER":
             _render_owner_panel(user, owner_snapshot)
         elif clicked:
+            # 목업(지역 선택 화면)의 "< 지도로 돌아가기" 되돌리기 링크(2026-08-28
+            # 첨부 목업 반영). 클릭 상태만 지우면 지도는 그대로 있으니 위쪽
+            # _render_hot_dong_panel로 자연히 돌아간다.
+            if st.button("← 지도로 돌아가기", key="back_to_map"):
+                st.session_state["region_click"] = None
+                st.rerun()
             _render_region_detail_panel(clicked)
         else:
             _render_hot_dong_panel()
