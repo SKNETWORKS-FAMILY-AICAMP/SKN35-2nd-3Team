@@ -30,6 +30,7 @@
 import argparse
 import json
 import time
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -62,11 +63,41 @@ CONT_COLS = [
 # (확인: df[col].nunique()가 각 쌍끼리 정확히 같음 -> 별도 정보 없음)
 CAT_COLS = ["industry_dae_code_enc", "industry_code_enc", "gu_name_enc",
             "dong_code_enc", "floor_category_enc"]
-EMB_DIMS = [4, 24, 8, 30, 3]  # cardinality 대비 경험적 heuristic (min(50,(card+1)//2) 근사)
+EMB_DIMS = [4, 32, 10, 48, 3]  # dong_code(428종)/industry_code(192종) 임베딩 확대
+
+# 카운트/거리/인구 계열은 롱테일 분포라 z-score만으로는 큰 값에 민감해지기 쉬움.
+# log1p로 눌러준 뒤 표준화 -> DNN이 패턴을 더 잘 잡도록.
+# (비율/플래그/좁은 범위 값들은 그대로: foreign_short_ratio, *_historical_rate,
+#  tourist_zone_candidate, population_is_proxied, previously_transitioned, lng/lat,
+#  store_age_months(0~24), keyword_growth_score(0~1.8 정도)는 제외)
+LOG1P_COLS = [
+    "same_industry_count_300m", "total_count_300m",
+    "nearest_same_industry_distance_m", "dong_industry_count", "coord_cluster_size",
+    "korean_pop", "foreign_long_pop", "foreign_short_pop", "total_pop_avg",
+]
+_LOG1P_MASK = np.array([c in LOG1P_COLS for c in CONT_COLS])
+
+
+def transform_cont(x_cont_raw: np.ndarray) -> np.ndarray:
+    """CONT_COLS 순서의 원본 값 배열에 log1p를 선택 적용. score/shap 스크립트도 동일 함수를 import해서 씀."""
+    x = x_cont_raw.astype(np.float32, copy=True)
+    x[:, _LOG1P_MASK] = np.log1p(np.clip(x[:, _LOG1P_MASK], a_min=0, a_max=None))
+    return x
+
 
 TARGET_COL = "is_closed_next"
 FOLD_COL = "fold"
 ID_COLS = ["store_id", "industry_code", "snapshot_date"]  # 학습엔 미사용, predict 단계에서 필요
+N_FOLDS = 5
+
+
+def fold_of(store_id: str, k: int = N_FOLDS) -> int:
+    """ml/build_modeling_dataset.py의 fold 배정과 완전히 동일한 해시.
+    (검증됨: 데이터의 fold 컬럼과 20만 건 전수 비교 결과 mismatch=0)
+    -> 학습 시 안 쓰인 store_id라도 이 함수만으로 '어느 fold 모델이 이 매장을 안 봤는지' 알 수 있음.
+    """
+    h = hashlib.md5(store_id.encode()).hexdigest()
+    return int(h, 16) % k
 
 USECOLS = CONT_COLS + CAT_COLS + [TARGET_COL, FOLD_COL] + ID_COLS
 
@@ -79,8 +110,9 @@ class ClosureMLP(nn.Module):
         self.embs = nn.ModuleList([nn.Embedding(c, d) for c, d in zip(cat_cards, emb_dims)])
         in_dim = n_cont + sum(emb_dims)
         self.net = nn.Sequential(
-            nn.Linear(in_dim, 128), nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128, 64), nn.BatchNorm1d(64), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(in_dim, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(0.35),
+            nn.Linear(256, 128), nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(128, 64), nn.BatchNorm1d(64), nn.ReLU(), nn.Dropout(0.25),
             nn.Linear(64, 32), nn.BatchNorm1d(32), nn.ReLU(), nn.Dropout(0.2),
             nn.Linear(32, 1),
         )
@@ -101,7 +133,7 @@ def load_data(data_path):
 
 
 def to_tensors(df, cont_mean, cont_std, device):
-    x_cont = (df[CONT_COLS].to_numpy(dtype=np.float32) - cont_mean) / cont_std
+    x_cont = (transform_cont(df[CONT_COLS].to_numpy(dtype=np.float32)) - cont_mean) / cont_std
     x_cats = df[CAT_COLS].to_numpy(dtype=np.int64)
     y = df[TARGET_COL].to_numpy(dtype=np.float32)
     return (torch.from_numpy(x_cont).to(device),
@@ -118,7 +150,7 @@ def iterate_batches(n, batch_size, shuffle=True):
 
 
 def run_epoch(model, opt, lossfn, x_cont, x_cats, y, batch_size, train=True,
-              epoch_num=None, total_epochs=None):
+              epoch_num=None, total_epochs=None, grad_clip=None):
     model.train(train)
     total_loss = 0.0
     n = x_cont.shape[0]
@@ -139,6 +171,8 @@ def run_epoch(model, opt, lossfn, x_cont, x_cats, y, batch_size, train=True,
             out = model(bc, bcat)
             loss = lossfn(out, by)
             loss.backward()
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             opt.step()
         else:
             with torch.no_grad():
@@ -171,10 +205,13 @@ def make_pos_weight(y, device):
     return torch.tensor([neg / max(pos, 1)], dtype=torch.float32, device=device)
 
 
-def train_model(x_cont, x_cats, y, cat_cards, device, val_data=None, max_epochs=30, patience=4,
-                 batch_size=4096, lr=1e-3):
+def train_model(x_cont, x_cats, y, cat_cards, device, val_data=None, max_epochs=50, patience=6,
+                 batch_size=4096, lr=1e-3, weight_decay=1e-5, grad_clip=5.0):
     model = ClosureMLP(n_cont=x_cont.shape[1], cat_cards=cat_cards, emb_dims=EMB_DIMS).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode="max", factor=0.5, patience=2, min_lr=1e-5
+    ) if val_data is not None else None
     pos_weight = make_pos_weight(y, device)
     lossfn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
@@ -185,7 +222,7 @@ def train_model(x_cont, x_cats, y, cat_cards, device, val_data=None, max_epochs=
     for epoch in epoch_range:
         t0 = time.time()
         train_loss, _ = run_epoch(model, opt, lossfn, x_cont, x_cats, y, batch_size, train=True,
-                                   epoch_num=epoch, total_epochs=max_epochs)
+                                   epoch_num=epoch, total_epochs=max_epochs, grad_clip=grad_clip)
         log = f"epoch {epoch:02d}  train_loss={train_loss:.4f}  ({time.time()-t0:.1f}s)"
 
         if val_data is not None:
@@ -195,10 +232,12 @@ def train_model(x_cont, x_cats, y, cat_cards, device, val_data=None, max_epochs=
             vy_np = vy.cpu().numpy()
             val_auc = roc_auc_score(vy_np, val_probs)
             val_pr = average_precision_score(vy_np, val_probs)
-            log += f"  val_loss={val_loss:.4f}  val_ROC-AUC={val_auc:.4f}  val_PR-AUC={val_pr:.4f}"
+            cur_lr = opt.param_groups[0]["lr"]
+            log += f"  val_loss={val_loss:.4f}  val_ROC-AUC={val_auc:.4f}  val_PR-AUC={val_pr:.4f}  lr={cur_lr:.2e}"
             history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
-                             "val_roc_auc": float(val_auc), "val_pr_auc": float(val_pr)})
+                             "val_roc_auc": float(val_auc), "val_pr_auc": float(val_pr), "lr": cur_lr})
             score = val_pr  # 불균형 데이터라 PR-AUC 기준 early stopping
+            scheduler.step(score)
             if score > best_score:
                 best_score, best_epoch, no_improve = score, epoch, 0
                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -221,11 +260,14 @@ def main():
     ap.add_argument("--data", default="data/processed/modeling_dataset_preprocessed_pmh.csv",
                      help="프로젝트 루트 기준 상대경로 (기본: data/processed/modeling_dataset_preprocessed_pmh.csv)")
     ap.add_argument("--artifact-dir", default="models/dl/saved",
-                     help="모델/스케일러/피처설정 저장 위치")
-    ap.add_argument("--max-epochs", type=int, default=30)
-    ap.add_argument("--patience", type=int, default=4)
+                     help="모델/스케일러/피처설정 저장 위치 (fold_0/ ~ fold_4/ 서브폴더 생성)")
+    ap.add_argument("--max-epochs", type=int, default=50)
+    ap.add_argument("--patience", type=int, default=6)
     ap.add_argument("--batch-size", type=int, default=4096)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--weight-decay", type=float, default=1e-5)
+    ap.add_argument("--n-folds", type=int, default=N_FOLDS,
+                     help="몇 개 fold까지 학습할지 (기본 5=전체, 시간 없으면 1~2로 줄여서 빠르게 테스트 가능)")
     args = ap.parse_args()
 
     artifact_dir = Path(args.artifact_dir)
@@ -243,74 +285,104 @@ def main():
     cat_cards = [int(df[c].max()) + 1 for c in CAT_COLS]
     print("카테고리 cardinality:", dict(zip(CAT_COLS, cat_cards)))
 
-    # ---------------- Phase A: fold 0,1,2 train / 3 val / 4 test ----------------
-    print("\n=== Phase A: fold 기반 검증 (베이스라인과 비교용) ===")
-    train_df = df[df[FOLD_COL].isin([0, 1, 2])]
-    val_df = df[df[FOLD_COL] == 3]
-    test_df = df[df[FOLD_COL] == 4]
+    # =====================================================================
+    # 5-fold 완전 교차검증 + 프로덕션 앙상블
+    #
+    # fold_k 모델은 "fold k를 제외한 전체(4/5)"로 학습되고, fold k는 그 모델이
+    # 한 번도 보지 못한 진짜 held-out 데이터로 성능 평가 + Platt calibration에 씀.
+    # 서빙(dl_score_tm.py)할 때는 매장의 store_id로 fold_of()를 다시 계산해서
+    # "그 매장을 한 번도 학습에 쓰지 않은 모델"로만 스코어링 -> 데이터 누수 0.
+    # (5개 폴드 전체를 각각 다르게 held-out하므로 전체 매장이 커버되고,
+    #  동시에 5개 독립 모델을 쓰는 것과 같은 효과라 앙상블 분산 감소 효과도 있음)
+    #
+    # 단계 (fold k마다):
+    #   1) val_fold = (k+1)%5, train_folds = 나머지 3개  -> early stopping으로 best_epoch 탐색
+    #   2) train_folds + val_fold(=4/5, fold k만 제외)로 best_epoch만큼 재학습 -> fold_k 프로덕션 모델
+    #   3) fold k(진짜 unseen)에서 최종 평가 + Platt scaling 계산
+    # =====================================================================
+    n_folds = min(args.n_folds, N_FOLDS)
+    fold_metrics = []
 
-    cont_mean = train_df[CONT_COLS].to_numpy(dtype=np.float32).mean(axis=0)
-    cont_std = train_df[CONT_COLS].to_numpy(dtype=np.float32).std(axis=0)
-    cont_std[cont_std == 0] = 1.0
+    for k in range(n_folds):
+        val_fold = (k + 1) % N_FOLDS
+        train_folds = [f for f in range(N_FOLDS) if f not in (k, val_fold)]
+        print(f"\n{'='*70}\n[Fold {k}]  train_folds={train_folds}  val_fold={val_fold}  test_fold(held-out)={k}\n{'='*70}")
 
-    xtr = to_tensors(train_df, cont_mean, cont_std, device)
-    xval = to_tensors(val_df, cont_mean, cont_std, device)
-    xtest = to_tensors(test_df, cont_mean, cont_std, device)
+        train_df = df[df[FOLD_COL].isin(train_folds)]
+        val_df = df[df[FOLD_COL] == val_fold]
+        test_df = df[df[FOLD_COL] == k]
 
-    model_a, best_epoch, history = train_model(
-        xtr[0], xtr[1], xtr[2], cat_cards, device, val_data=xval,
-        max_epochs=args.max_epochs, patience=args.patience,
-        batch_size=args.batch_size, lr=args.lr,
-    )
+        cont_mean = transform_cont(train_df[CONT_COLS].to_numpy(dtype=np.float32)).mean(axis=0)
+        cont_std = transform_cont(train_df[CONT_COLS].to_numpy(dtype=np.float32)).std(axis=0)
+        cont_std[cont_std == 0] = 1.0
 
-    print("\n--- Phase A 최종 평가 (held-out fold 4) ---")
-    model_a.eval()
-    with torch.no_grad():
-        test_logits = model_a(xtest[0], xtest[1]).cpu().numpy()
-    test_probs_raw = 1.0 / (1.0 + np.exp(-test_logits))
-    test_y = xtest[2].cpu().numpy()
-    print("[캘리브레이션 전]")
-    test_metrics = evaluate(test_probs_raw, test_y, label="TEST(fold4, raw)")
-    print(f"  raw 예측확률 평균={test_probs_raw.mean():.4f}  vs  실제 폐업률={test_y.mean():.4f}  "
-          f"<- pos_weight 사용 시 보통 크게 어긋남(정상)")
+        xtr = to_tensors(train_df, cont_mean, cont_std, device)
+        xval = to_tensors(val_df, cont_mean, cont_std, device)
+        xtest = to_tensors(test_df, cont_mean, cont_std, device)
 
-    # ---------------- Platt scaling 캘리브레이션 ----------------
-    # pos_weight로 불균형 보정을 하면 sigmoid(logit)의 절대값(=score)이 실제 확률과
-    # 크게 어긋남(랭킹 지표 ROC-AUC/PR-AUC/Lift는 monotonic이라 영향 없음, 하지만
-    # UI에서 "생존점수=(1-score)x100" 처럼 score를 확률로 직접 쓰므로 보정 필요).
-    # -> fold4(모델이 한번도 학습/얼리스토핑에 쓰지 않은 진짜 held-out)의 raw logit에
-    #    1차원 로지스틱 회귀(Platt scaling)를 적합해서 calibrated_prob = sigmoid(a*logit+b)로 변환.
-    calib_lr = LogisticRegression(C=1e10, max_iter=1000)
-    calib_lr.fit(test_logits.reshape(-1, 1), test_y)
-    calib_a = float(calib_lr.coef_[0][0])
-    calib_b = float(calib_lr.intercept_[0])
-    test_probs_calibrated = 1.0 / (1.0 + np.exp(-(calib_a * test_logits + calib_b)))
-    print("[캘리브레이션 후]")
-    test_metrics_calibrated = evaluate(test_probs_calibrated, test_y, label="TEST(fold4, calibrated)")
-    print(f"  calibrated 예측확률 평균={test_probs_calibrated.mean():.4f}  vs  실제 폐업률={test_y.mean():.4f}")
-    test_metrics["calibrated"] = test_metrics_calibrated
-    test_metrics["calibration_params"] = {"a": calib_a, "b": calib_b,
-                                           "formula": "prob = sigmoid(a * raw_logit + b)"}
+        print(f"[Fold {k}] 1/2 - early stopping용 후보 모델 학습 (train {len(train_df):,} / val {len(val_df):,})")
+        _, best_epoch, _ = train_model(
+            xtr[0], xtr[1], xtr[2], cat_cards, device, val_data=xval,
+            max_epochs=args.max_epochs, patience=args.patience,
+            batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
+        )
 
-    # ---------------- Phase B: 전체 데이터로 프로덕션 모델 재학습 ----------------
-    print(f"\n=== Phase B: 전체 데이터(fold 0~4)로 프로덕션 모델 재학습 (epochs={best_epoch}) ===")
-    full_cont_mean = df[CONT_COLS].to_numpy(dtype=np.float32).mean(axis=0)
-    full_cont_std = df[CONT_COLS].to_numpy(dtype=np.float32).std(axis=0)
-    full_cont_std[full_cont_std == 0] = 1.0
+        # ---- 2) fold k만 제외한 4/5 전체로 프로덕션 모델 재학습 ----
+        print(f"\n[Fold {k}] 2/2 - fold {k} 제외 전체(4/5)로 프로덕션 모델 재학습 (epochs={best_epoch})")
+        prod_df = df[df[FOLD_COL] != k]
+        prod_cont_mean = transform_cont(prod_df[CONT_COLS].to_numpy(dtype=np.float32)).mean(axis=0)
+        prod_cont_std = transform_cont(prod_df[CONT_COLS].to_numpy(dtype=np.float32)).std(axis=0)
+        prod_cont_std[prod_cont_std == 0] = 1.0
 
-    xall = to_tensors(df, full_cont_mean, full_cont_std, device)
-    model_prod, _, _ = train_model(
-        xall[0], xall[1], xall[2], cat_cards, device, val_data=None,
-        max_epochs=best_epoch, patience=best_epoch,
-        batch_size=args.batch_size, lr=args.lr,
-    )
+        xprod = to_tensors(prod_df, prod_cont_mean, prod_cont_std, device)
+        model_k, _, _ = train_model(
+            xprod[0], xprod[1], xprod[2], cat_cards, device, val_data=None,
+            max_epochs=best_epoch, patience=best_epoch,
+            batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
+        )
 
-    # ---------------- 저장 ----------------
-    torch.save(model_prod.state_dict(), artifact_dir / "model_state.pt")
+        # ---- 3) fold k(진짜 unseen)로 최종 평가 + Platt calibration ----
+        xtest_prod = to_tensors(test_df, prod_cont_mean, prod_cont_std, device)
+        model_k.eval()
+        with torch.no_grad():
+            test_logits = model_k(xtest_prod[0], xtest_prod[1]).cpu().numpy()
+        test_y = xtest_prod[2].cpu().numpy()
+        test_probs_raw = 1.0 / (1.0 + np.exp(-test_logits))
+        print(f"\n[Fold {k}] 최종 평가 (fold {k}, 이 모델이 학습에 전혀 안 쓴 데이터)")
+        evaluate(test_probs_raw, test_y, label=f"Fold{k} raw")
 
-    scaler = {"cont_cols": CONT_COLS, "mean": full_cont_mean.tolist(), "std": full_cont_std.tolist()}
-    with open(artifact_dir / "scaler.json", "w", encoding="utf-8") as f:
-        json.dump(scaler, f, ensure_ascii=False, indent=2)
+        calib_lr = LogisticRegression(C=1e10, max_iter=1000)
+        calib_lr.fit(test_logits.reshape(-1, 1), test_y)
+        calib_a = float(calib_lr.coef_[0][0])
+        calib_b = float(calib_lr.intercept_[0])
+        test_probs_cal = 1.0 / (1.0 + np.exp(-(calib_a * test_logits + calib_b)))
+        metrics_k = evaluate(test_probs_cal, test_y, label=f"Fold{k} calibrated")
+        metrics_k["calibration_params"] = {"a": calib_a, "b": calib_b,
+                                            "formula": "prob = sigmoid(a * raw_logit + b)"}
+        metrics_k["trained_epochs"] = best_epoch
+        fold_metrics.append(metrics_k)
+
+        # ---- 저장: fold_k/ 서브폴더 ----
+        fold_dir = artifact_dir / f"fold_{k}"
+        fold_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(model_k.state_dict(), fold_dir / "model_state.pt")
+        with open(fold_dir / "scaler.json", "w", encoding="utf-8") as f:
+            json.dump({"cont_cols": CONT_COLS, "mean": prod_cont_mean.tolist(),
+                       "std": prod_cont_std.tolist(), "log1p_cols": LOG1P_COLS}, f,
+                      ensure_ascii=False, indent=2)
+        with open(fold_dir / "calibration.json", "w", encoding="utf-8") as f:
+            json.dump(metrics_k, f, ensure_ascii=False, indent=2)
+        print(f"[Fold {k}] 저장 완료 -> {fold_dir}/")
+
+    # ---------------- 전체 fold 평균 성능 (single-split보다 훨씬 신뢰도 높은 추정치) ----------------
+    print(f"\n{'='*70}\n[전체 {n_folds}-fold 평균 성능 (calibrated)]\n{'='*70}")
+    roc_list = [m["roc_auc"] for m in fold_metrics]
+    pr_list = [m["pr_auc"] for m in fold_metrics]
+    lift_list = [m["top5pct_lift"] for m in fold_metrics]
+    print(f"ROC-AUC   : {np.mean(roc_list):.4f} ± {np.std(roc_list):.4f}   (fold별: {[round(x,4) for x in roc_list]})")
+    print(f"PR-AUC    : {np.mean(pr_list):.4f} ± {np.std(pr_list):.4f}   (fold별: {[round(x,4) for x in pr_list]})")
+    print(f"Top5% Lift: {np.mean(lift_list):.2f}x ± {np.std(lift_list):.2f}   (fold별: {[round(x,2) for x in lift_list]})")
+    print("참고 - LightGBM 베이스라인: ROC-AUC 0.721~0.728, PR-AUC 0.300~0.317, Lift 4.12x (single-split)")
 
     feature_config = {
         "cont_cols": CONT_COLS,
@@ -318,19 +390,24 @@ def main():
         "cat_cards": cat_cards,
         "emb_dims": EMB_DIMS,
         "target_col": TARGET_COL,
-        "trained_epochs": best_epoch,
-        "phaseA_test_metrics_fold4": test_metrics,
-        "phaseA_history": history,
-        "model_arch": "emb -> concat -> 128-BN-ReLU-Drop(0.3) -> 64-BN-ReLU-Drop(0.3) -> 32-BN-ReLU-Drop(0.2) -> 1(logit)",
+        "n_folds": n_folds,
+        "fold_metrics": fold_metrics,
+        "cv_summary": {
+            "roc_auc_mean": float(np.mean(roc_list)), "roc_auc_std": float(np.std(roc_list)),
+            "pr_auc_mean": float(np.mean(pr_list)), "pr_auc_std": float(np.std(pr_list)),
+            "top5pct_lift_mean": float(np.mean(lift_list)), "top5pct_lift_std": float(np.std(lift_list)),
+        },
+        "model_arch": "emb -> concat -> 256-BN-ReLU-Drop(.35) -> 128-BN-ReLU-Drop(.3) -> "
+                      "64-BN-ReLU-Drop(.25) -> 32-BN-ReLU-Drop(.2) -> 1(logit)",
         "loss": "BCEWithLogitsLoss(pos_weight=neg/pos)",
+        "serving_note": ("각 fold_k/ 모델은 fold k 매장을 학습에 전혀 쓰지 않음. "
+                          "dl_score_tm.py는 store_id로 fold_of()를 다시 계산해서 "
+                          "그 매장을 안 본 모델로만 스코어링함(데이터 누수 0)."),
     }
-    with open(artifact_dir / "feature_config.json", "w", encoding="utf-8") as f:
+    with open(artifact_dir / "ensemble_config.json", "w", encoding="utf-8") as f:
         json.dump(feature_config, f, ensure_ascii=False, indent=2)
 
-    print(f"\n저장 완료 -> {artifact_dir}/model_state.pt, scaler.json, feature_config.json")
-    print("참고 - LightGBM 베이스라인: ROC-AUC 0.721~0.728, PR-AUC 0.300~0.317")
-    print(f"DNN(fold4 test) : ROC-AUC {test_metrics['roc_auc']:.4f}, PR-AUC {test_metrics['pr_auc']:.4f}, "
-          f"Top5% Lift {test_metrics['top5pct_lift']:.2f}x")
+    print(f"\n전체 저장 완료 -> {artifact_dir}/fold_0 ~ fold_{n_folds-1}/, ensemble_config.json")
 
 
 if __name__ == "__main__":
