@@ -47,6 +47,7 @@ import streamlit as st
 from scipy.spatial import Voronoi
 from sqlalchemy import text
 from streamlit_folium import st_folium
+import base64
 
 from shared import auth
 from shared import components as ui
@@ -57,6 +58,8 @@ from shared.write_user_view import increment_user_view
 st.set_page_config(page_title="서울 상권 폐업예측", layout="wide")
 
 _MY_PAGE_EXISTS = (Path(__file__).resolve().parent / "pages" / "mypage.py").exists()
+_BRAND_LOGO_PATH = str(Path(__file__).resolve().parent / "assets" / "brand_logo.png")
+_BRAND_LOGO_EXISTS = Path(_BRAND_LOGO_PATH).exists()
 
 
 def _wilson_lower_bound(p: float, n: int, z: float = 1.96) -> float:
@@ -178,6 +181,32 @@ def _top_dongs_for_industry(industry_code: str, top_n: int = 3) -> list[dict]:
     scored.sort(key=lambda x: x["wilson_score"], reverse=True)
     return scored[:top_n]
 
+@st.cache_data(ttl=3600)
+def _transition_counts_from(industry_code: str) -> dict:
+    """industry_transitions(실제 전환 이력)에서 현재 업종(from) 기준 목적지별
+    전환 건수. industry_survival_stats(생존율)와 별개 테이블이라, "생존율은
+    높은데 실제로 아무도 안 간 업종"과 "실제로 많이들 갔고 생존율도 높은 업종"을
+    구분해서 보여줄 수 있게 함(2026-08-28 추가)."""
+    engine = get_engine()
+    if engine is None:
+        return {}
+    sql = text(
+        """
+        SELECT to_industry_code, COUNT(*) AS n
+        FROM industry_transitions
+        WHERE from_industry_code = :industry_code
+        GROUP BY to_industry_code
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"industry_code": industry_code}).mappings().all()
+    return {r["to_industry_code"]: int(r["n"]) for r in rows}
+
+
+@st.cache_data(ttl=3600)
+def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list[dict]:
+    ...
+
 
 @st.cache_data(ttl=3600)
 def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list[dict]:
@@ -204,13 +233,16 @@ def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list
     with engine.connect() as conn:
         rows = conn.execute(sql, {"industry_code": industry_code}).mappings().all()
 
+    transition_counts = _transition_counts_from(industry_code)
+
     recs = []
     for r in rows:
         if ui.is_excluded_industry(r["custom_group"]):
             continue
         d = dict(r)
         d["wilson_score"] = _wilson_lower_bound(float(r["survival_rate"]), int(r["sample_size"]))
-        d["low_confidence"] = r["sample_size"] < 30  # dong_industry_historical_rate와 동일 기준(30건) 재사용
+        d["low_confidence"] = r["sample_size"] < 30
+        d["transition_count"] = transition_counts.get(r["to_industry_code"], 0)
         recs.append(d)
 
     recs.sort(key=lambda x: x["wilson_score"], reverse=True)
@@ -371,13 +403,14 @@ def _owner_latest_snapshot(store_id: str) -> dict | None:
 @st.cache_data(ttl=600)
 def _owner_competition_density(store_id: str, snapshot_date: str) -> dict | None:
     """spatial_density_features(반경 300m 내 동일업종/전체 매장 수, 20m 내 클러스터
-    크기)를 owner 패널에서 활용 — 있는 데이터인데 화면에서 안 쓰고 있던 부분."""
+    크기, 가장 가까운 동일업종 매장까지 거리)를 owner 패널에서 활용."""
     engine = get_engine()
     if engine is None:
         return None
     sql = text(
         """
-        SELECT same_industry_count_300m, total_count_300m, coord_cluster_size
+        SELECT same_industry_count_300m, total_count_300m, coord_cluster_size,
+               nearest_same_industry_distance_m
         FROM spatial_density_features
         WHERE store_id = :store_id AND snapshot_date = :snapshot_date
         """
@@ -401,6 +434,18 @@ def _population_feature(dong_code: str) -> dict | None:
     with engine.connect() as conn:
         row = conn.execute(sql, {"dong_code": dong_code}).mappings().first()
     return dict(row) if row else None
+
+@st.cache_data(ttl=3600)
+def _dong_compare_stats(dong_code: str) -> dict | None:
+    """동네 비교 카드용 — 생존율/유동인구/경쟁밀도 요약 한 번에 조회.
+    _dong_survival_proxy, _population_feature와 같은 원본 데이터를 재사용하되
+    비교 카드 하나에 필요한 값만 모아서 반환."""
+    match = next((p for p in _dong_survival_proxy() if p["dong_code"] == dong_code), None)
+    pop = _population_feature(dong_code)
+    return {
+        "survival_score": round(match["survival_rate"] * 100) if match else None,
+        "total_pop_avg": float(pop["total_pop_avg"]) if pop else None,
+    }
 
 @st.cache_data(ttl=3600)
 def _dong_top_industries(dong_code: str, top_n: int = 3) -> list[dict]:
@@ -745,6 +790,37 @@ def _rank_card(badge: str, title: str, pill_text: str, caption: str,
         )
         st.caption(caption)
 
+def _render_dong_search_box():
+    """동 이름으로 바로 검색해서 지역상세 패널로 이동하는 검색창(2026-08-28 추가,
+    같은 날 헤더 줄로 위치 이동). 상단 헤더의 브랜드/로그인 사이에 끼워 넣을
+    거라 서브헤더 텍스트 없이 selectbox 하나만 컴팩트하게 둔다. 선택하는 순간
+    바로 지역상세로 넘어가서(별도 "보기" 버튼 없음) 한 번의 조작으로 끝난다."""
+    names = _dong_name_map()
+    points = {p["dong_code"]: p for p in _dong_survival_proxy()}
+    if not names:
+        return
+
+    options = sorted(names.items(), key=lambda x: x[1])
+    codes = [c for c, _ in options]
+    labels = [n for _, n in options]
+
+    idx = st.selectbox(
+        "동 이름으로 검색",
+        options=range(len(labels)),
+        format_func=lambda i: labels[i],
+        index=None,
+        placeholder="🔍 동 이름으로 검색",
+        key="dong_search_select",
+        label_visibility="collapsed",
+    )
+    if idx is not None:
+        code = codes[idx]
+        point = points.get(code)
+        if point:
+            new_click = {"lat": point["lat"], "lng": point["lng"]}
+            if st.session_state.get("region_click") != new_click:
+                st.session_state["region_click"] = new_click
+                st.rerun()
 
 def _render_hot_dong_panel():
     """"카드가 밋밋해서 볼품없다"(1차) → 순위 뱃지+알약(2차) → 4/5위 스타일 안맞음
@@ -868,6 +944,13 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
                 f"동일업종 {density['same_industry_count_300m']}곳 / 전체 {density['total_count_300m']}곳 "
                 f"(동일업종 비중 {ratio:.0f}%)"
             )
+            # nearest_same_industry_distance_m은 동일업종이 자기뿐이면 NULL
+            # (schema.sql 주석 참고).
+            nearest_dist = density.get("nearest_same_industry_distance_m")
+            if nearest_dist is not None:
+                st.caption(f"가장 가까운 동일업종 매장까지 {float(nearest_dist):.0f}m")
+            else:
+                st.caption("반경 내 동일업종 경쟁점이 없어요.")
             if density["coord_cluster_size"] and density["coord_cluster_size"] >= 3:
                 st.caption(f"복합상가·건물 추정 — 반경 20m 내 매장 {density['coord_cluster_size']}곳")
 
@@ -913,12 +996,12 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
     recs = _industry_switch_recommendations(snapshot["industry_code"], top_n=3)
     if recs:
         for r in recs:
-            # survival_rate 원값이 아니라 Wilson 하한 기반 점수 — 표본 1~2건짜리가
-            # 100점으로 부풀려지는 문제 해결(2026-08-28, _industry_switch_recommendations 참고).
             switch_score = round(r["wilson_score"] * 100)
             caveat = f"표본 {r['sample_size']}건 기준"
             if r["low_confidence"]:
                 caveat = f"⚠️ 표본 {r['sample_size']}건 — 신뢰도 낮음, 참고만 하세요"
+            if r["transition_count"] > 0:
+                caveat += f" · 실제 전환 사례 {r['transition_count']}건"
             ui.score_card(
                 title=r["industry_name"],
                 survival_score=switch_score,
@@ -981,6 +1064,42 @@ def _render_region_detail_panel(clicked: dict):
     # 아직 못 채움 — 안내 문구 없이 공란으로 둔다(2026-08-28 사용자 요청: "shap이나
     # 모델 데이터로 못하는건 공란으로 해줘 어차피 들어가니까").
 
+        # 동네 비교(2026-08-28 추가) — 세션에 "비교 목록"을 담아두고 최대 3곳까지
+    # 나란히 표를 보여준다. 새 데이터/모델 없이 이미 조회 중인 값만 재사용.
+    st.divider()
+    if "compare_dongs" not in st.session_state:
+        st.session_state["compare_dongs"] = []
+
+    compare_list = st.session_state["compare_dongs"]
+    already_added = dong_code in compare_list
+    col_add, col_clear = st.columns([2, 1])
+    with col_add:
+        if not already_added and len(compare_list) < 3:
+            if st.button("➕ 비교 목록에 담기", key="add_compare"):
+                compare_list.append(dong_code)
+                st.rerun()
+        elif already_added:
+            st.caption("이미 비교 목록에 있어요.")
+        else:
+            st.caption("비교는 최대 3곳까지 가능해요.")
+    with col_clear:
+        if compare_list and st.button("🗑️ 비우기", key="clear_compare"):
+            st.session_state["compare_dongs"] = []
+            st.rerun()
+
+    if compare_list:
+        st.markdown("**동네 비교**")
+        names = _dong_name_map()
+        cols = st.columns(len(compare_list))
+        for col, code in zip(cols, compare_list):
+            stats = _dong_compare_stats(code)
+            with col:
+                st.markdown(f"**{names.get(code, code)}**")
+                if stats and stats["survival_score"] is not None:
+                    st.metric("생존점수", f"{stats['survival_score']}점")
+                if stats and stats["total_pop_avg"] is not None:
+                    st.caption(f"유동인구 {stats['total_pop_avg']:.0f}명")
+
 
 # ---------------------------------------------------------------
 # 레이아웃(사이드바 제거 + 상단 헤더) — 사용자가 첨부한 목업 4장처럼
@@ -1012,24 +1131,36 @@ def _inject_layout_css():
     )
 
 
-def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None):
-    """예전엔 로그인 상태를 사이드바에 표시했는데(2026-08-27), 사이드바 자체를
-    없애면서(2026-08-28) 상단 헤더 행으로 옮겼다. 마이페이지 이동 버튼은 owner/founder
-    로그인 시 노출한다(2026-08-28 요청) — 단, 다른 팀원이 작업 중인 페이지라 파일이
-    실제로 있을 때만 보여준다(_MY_PAGE_EXISTS, 위 참고). URL이 /mypage로 나오려면
-    파일명이 mypage.py여야 함(Streamlit은 파일명을 그대로 URL 슬러그로 씀)."""
-    col_brand, col_auth = st.columns([8, 2])
-    with col_brand:
-        st.markdown("### 📍 서울 상권 폐업예측")
-    with col_auth:
+
+
+
+@st.cache_data
+def _brand_logo_base64() -> str | None:
+    """로고(아이콘+텍스트 통짜 이미지)를 클릭 가능한 <a> 태그 안에 넣으려면
+    st.image가 아니라 <img> 태그로 직접 그려야 해서(2026-08-28, "누르면 메인으로
+    이동하게" 요청) base64로 인코딩. 코드로 아이콘+텍스트를 따로 그리던 방식은
+    "텍스트 섞지 말고" 요청으로 통짜 로고 이미지로 교체."""
+    if not _BRAND_LOGO_EXISTS:
+        return None
+    with open(_BRAND_LOGO_PATH, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
+def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None, show_search: bool):
+    """헤더를 두 줄로 분리: 상단 얇은 줄 오른쪽에 로그인 상태, 아래 메인 줄에
+    브랜드(왼쪽, 클릭 시 메인 이동)와 동 검색창(오른쪽). 커스텀 CSS 없이 두 줄
+    모두 동일한 컬럼 비율([7, 3])을 써서, 오른쪽 컬럼 안에 넣은 요소가 자연히
+    같은 가로 위치에 정렬되도록 함(2026-08-28, 이전 CSS 시도가 페이지 전체
+    기준으로 flex를 걸어버려 로그인 버튼이 화면 중앙으로 튀는 문제가 있었음 —
+    커스텀 CSS를 걷어내고 컬럼 구조만으로 해결)."""
+    col_top_spacer, col_top_auth = st.columns([9, 1])
+    with col_top_auth:
         if mode == "GUEST":
             st.page_link("pages/login.py", label="로그인", icon="➡️")
         else:
             label = {"owner": "기존점주", "founder": "예비창업자", "admin": "관리자"}.get(
                 user["user_type"], user["user_type"]
             )
-            # 기존점주는 login_id가 가게 코드(예: MA0101...)라 그대로 보여주면 사용자가
-            # 못 알아봄 — 매장이름으로 대신 표시(2026-08-28 요청).
             display_name = user["login_id"]
             if user["user_type"] == "owner" and owner_snapshot and owner_snapshot.get("store_name"):
                 display_name = owner_snapshot["store_name"]
@@ -1037,11 +1168,35 @@ def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None
             if st.button("로그아웃", key="top_logout"):
                 auth.logout()
                 st.rerun()
+            if mode == "ADMIN":
+                st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동", icon="➡️")
+            elif mode in ("OWNER", "NEW_MEMBER") and _MY_PAGE_EXISTS:
+                st.page_link("pages/mypage.py", label="마이페이지로 이동", icon="➡️")
 
-    if mode == "ADMIN":
-        st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동", icon="➡️")
-    elif mode in ("OWNER", "NEW_MEMBER") and _MY_PAGE_EXISTS:
-        st.page_link("pages/mypage.py", label="마이페이지로 이동", icon="➡️")
+    col_brand, col_search = st.columns([8, 2])
+    with col_brand:
+        logo_b64 = _brand_logo_base64()
+        if logo_b64:
+            st.markdown(
+                f"""
+                <a href="/" target="_self" style="display:inline-block;">
+                    <img src="data:image/png;base64,{logo_b64}" style="height:44px; width:auto;">
+                </a>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """
+                <a href="/" target="_self" style="text-decoration:none; color:inherit;">
+                    <span style="font-size:1.5rem; font-weight:700;">📍 서울 상권 폐업예측</span>
+                </a>
+                """,
+                unsafe_allow_html=True,
+            )
+    with col_search:
+        if show_search:
+            _render_dong_search_box()
 
 
 # ---------------------------------------------------------------
@@ -1053,8 +1208,7 @@ def main():
     user = auth.current_user()
     owner_snapshot = _owner_latest_snapshot(user["store_id"]) if mode == "OWNER" else None
 
-    _render_top_header(mode, user, owner_snapshot)
-    st.title("서울 상권 폐업예측")
+    _render_top_header(mode, user, owner_snapshot, show_search=mode in ("GUEST", "NEW_MEMBER"))
 
     if mode == "ADMIN":
         st.info("관리자 계정으로 로그인하셨어요. 위에서 관리자 대시보드로 이동해주세요.")
@@ -1098,15 +1252,16 @@ def main():
         elif clicked:
             # 목업(지역 선택 화면)의 "< 지도로 돌아가기" 되돌리기 링크(2026-08-28
             # 첨부 목업 반영). 클릭 상태만 지우면 지도는 그대로 있으니 위쪽
-            # _render_hot_dong_panel로 자연히 돌아간다.
+            # 패널로 자연히 돌아간다.
             if st.button("← 지도로 돌아가기", key="back_to_map"):
                 st.session_state["region_click"] = None
                 st.rerun()
             _render_region_detail_panel(clicked)
 
         elif mode == "NEW_MEMBER":
-        # GUEST와 완전히 동일한 화면이라는 피드백(2026-08-28) — 예비창업자
-        # 전용 "관심 업종으로 동네 찾기" 탐색 기능을 위에 추가한 패널로 분리.
+            # GUEST와 완전히 동일한 화면이라는 피드백(2026-08-28) — 예비창업자
+            # 전용 "관심 업종으로 동네 찾기" 탐색 기능. 동 검색창은 상단 헤더로
+            # 옮겨졌다(2026-08-28, "저 사진 라인에 마지막에 두면 참 좋을텐데" 요청).
             _render_new_member_panel()
         else:
             _render_hot_dong_panel()
