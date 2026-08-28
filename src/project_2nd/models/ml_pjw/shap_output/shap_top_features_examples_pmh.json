@@ -1,0 +1,607 @@
+{
+  "schema_source": "src/project_2nd/db/테이블_설명.md (predictions.shap_top_features)",
+  "note": "실제 학습된 모델로 계산한 진짜 SHAP 값(가짜 데이터 아님) — 다만 이건 DB에 넣을 데이터가 아니라 explain_prediction()/explain_batch() 함수가 스키마대로 잘 작동하는지 보여주는 테스트/참고용 예시다. predictions 테이블은 앱이 실시간으로 채우는 운영 데이터라 우리가 배치로 미리 적재하지 않는다(db/etl/load_to_tidb.py 참고).",
+  "n_examples": 20,
+  "example_predictions": [
+    {
+      "store_id": "MA010120220805352928",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.154462,
+          "feature_value": 12.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.037274,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.030921,
+          "feature_value": 3.0
+        },
+        {
+          "feature": "industry_jung_name",
+          "shap_value": -0.008296,
+          "feature_value": 26.0
+        },
+        {
+          "feature": "industry_name",
+          "shap_value": -0.008159,
+          "feature_value": 10.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220800420639",
+      "shap_top_features": [
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.139827,
+          "feature_value": 0.0447948916408668
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.069934,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.049749,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.036282,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_jung_name",
+          "shap_value": -0.01194,
+          "feature_value": 35.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220805638662",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.122135,
+          "feature_value": 18.0
+        },
+        {
+          "feature": "previously_transitioned",
+          "shap_value": -0.042593,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.035602,
+          "feature_value": 3.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.034915,
+          "feature_value": 0.0720623823608496
+        },
+        {
+          "feature": "industry_code",
+          "shap_value": -0.021763,
+          "feature_value": 175.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220805181693",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.097044,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.045919,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.028206,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "industry_jung_name",
+          "shap_value": -0.007558,
+          "feature_value": 52.0
+        },
+        {
+          "feature": "previously_transitioned",
+          "shap_value": 0.007371,
+          "feature_value": 0.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220806946553",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.199231,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.117656,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.057753,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.050706,
+          "feature_value": 0.1481481481481481
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": 0.018489,
+          "feature_value": 0.1481481481481481
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220809966512",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.110773,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.032394,
+          "feature_value": 0.0711941789128263
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.019085,
+          "feature_value": 0.0771704180064308
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.018819,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.013633,
+          "feature_value": 1.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220812186653",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.117445,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.049221,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.018873,
+          "feature_value": 0.111539651929624
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.015109,
+          "feature_value": 0.0641025641025641
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.013096,
+          "feature_value": 2.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220804997082",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.128336,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.032203,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.017239,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_code",
+          "shap_value": 0.008091,
+          "feature_value": 115.0
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.007848,
+          "feature_value": 2.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220800440829",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.075878,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.07553,
+          "feature_value": 0.0416417016177351
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.034467,
+          "feature_value": 0.046875
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.029506,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.014953,
+          "feature_value": 0.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA0101202306A0046408",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.202963,
+          "feature_value": 18.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.065243,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_dae_code",
+          "shap_value": -0.027787,
+          "feature_value": 4.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.021088,
+          "feature_value": 0.1481481481481481
+        },
+        {
+          "feature": "industry_code",
+          "shap_value": -0.017962,
+          "feature_value": 136.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220803957117",
+      "shap_top_features": [
+        {
+          "feature": "previously_transitioned",
+          "shap_value": -0.17287,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "transitioned_next",
+          "shap_value": -0.134633,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.05474,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.038366,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.035137,
+          "feature_value": 0.0631125692023785
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220805928332",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.117093,
+          "feature_value": 12.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.027416,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.022292,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.018344,
+          "feature_value": 0.1386151689388244
+        },
+        {
+          "feature": "dong_historical_rate",
+          "shap_value": -0.012139,
+          "feature_value": 0.0795143638850889
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220813800791",
+      "shap_top_features": [
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.098427,
+          "feature_value": 0.0469853786758666
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.05749,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.041209,
+          "feature_value": 0.0469853786758666
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.022386,
+          "feature_value": 1.0
+        },
+        {
+          "feature": "industry_dae_code",
+          "shap_value": -0.019189,
+          "feature_value": 6.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220803802196",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.124446,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.054845,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.032947,
+          "feature_value": 0.2338100594568536
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.018821,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.015412,
+          "feature_value": 1.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220808337685",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.088491,
+          "feature_value": 12.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.036524,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.026953,
+          "feature_value": 0.1350342252644679
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.024892,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_code",
+          "shap_value": 0.009517,
+          "feature_value": 85.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220813720854",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.080348,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.037941,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.028318,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.017358,
+          "feature_value": 0.0881518897602906
+        },
+        {
+          "feature": "dong_industry_historical_rate",
+          "shap_value": -0.017002,
+          "feature_value": 0.088235294117647
+        }
+      ]
+    },
+    {
+      "store_id": "MA0101202409A0076213",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.093502,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.080586,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": 0.028768,
+          "feature_value": 6.0
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.026417,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.019826,
+          "feature_value": 0.0881518897602906
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220803943367",
+      "shap_top_features": [
+        {
+          "feature": "snapshot_date",
+          "shap_value": -0.139481,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "store_age_months",
+          "shap_value": 0.034452,
+          "feature_value": 0.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.025804,
+          "feature_value": 0.0790659080132764
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.024932,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.016291,
+          "feature_value": 4.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220810238165",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.262086,
+          "feature_value": 24.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.054787,
+          "feature_value": 4.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.031291,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": 0.018011,
+          "feature_value": 0.1568196103079824
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.009655,
+          "feature_value": 2.0
+        }
+      ]
+    },
+    {
+      "store_id": "MA010120220804115141",
+      "shap_top_features": [
+        {
+          "feature": "store_age_months",
+          "shap_value": -0.159968,
+          "feature_value": 24.0
+        },
+        {
+          "feature": "snapshot_date",
+          "shap_value": 0.045516,
+          "feature_value": 4.0
+        },
+        {
+          "feature": "industry_group",
+          "shap_value": -0.025772,
+          "feature_value": 2.0
+        },
+        {
+          "feature": "industry_historical_rate",
+          "shap_value": -0.019146,
+          "feature_value": 0.073956780923994
+        },
+        {
+          "feature": "floor_category",
+          "shap_value": -0.018262,
+          "feature_value": 1.0
+        }
+      ]
+    }
+  ]
+}
