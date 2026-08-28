@@ -10,11 +10,15 @@ body:
       description: ProductVersion, 전체 GitCommit, SpecRevision, ArtifactSHA256과 테스트한 공개 URL을 적어주세요.
     validations:
       required: true
-  - type: input
+  - type: dropdown
     id: environment
     attributes:
       label: 환경
-      description: OS, 브라우저/버전, 기기와 입력 방식을 적어주세요.
+      description: 테스트한 환경을 선택해 주세요.
+      options:
+        - Browser
+        - AOS
+        - iOS
     validations:
       required: true
   - type: textarea
@@ -39,12 +43,12 @@ body:
   - type: dropdown
     id: severity
     attributes:
-      label: 제안 우선순위
+      label: 우선순위
       options:
-        - P0 제출/플레이 차단
-        - P1 핵심 경험 훼손
-        - P2 우회 가능/영향 제한
-        - P3 개선 사항
+        - P0 심각
+        - P1 중요
+        - P2 보통
+        - P3 사소
     validations:
       required: true
   - type: textarea
