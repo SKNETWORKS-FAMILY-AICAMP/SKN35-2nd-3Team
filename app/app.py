@@ -54,6 +54,20 @@ from shared.db import get_engine
 
 st.set_page_config(page_title="서울 상권 폐업예측", layout="wide")
 
+_MY_PAGE_EXISTS = (Path(__file__).resolve().parent / "pages" / "mypage.py").exists()
+
+
+def _wilson_lower_bound(p: float, n: int, z: float = 1.96) -> float:
+    """Wilson score interval 하한(95%) — 표본이 적을수록 신뢰구간이 넓어져서
+    하한이 크게 깎인다. survival_rate 원값으로만 정렬하면 표본 1~2건짜리가
+    우연히 100%를 찍고 1위를 차지하는 문제(예: "중고 상품 소매업 100점,
+    표본 1건 기준")를 막기 위해 도입."""
+    if n <= 0:
+        return 0.0
+    denom = 1 + z**2 / n
+    center = p + z**2 / (2 * n)
+    margin = z * math.sqrt((p * (1 - p) + z**2 / (4 * n)) / n)
+    return max(0.0, (center - margin) / denom)
 
 # ---------------------------------------------------------------
 # 데이터 조회 (읽기 전용, 전부 st.cache_data로 캐싱 — DB 부하 방지)
@@ -89,13 +103,68 @@ def _industry_name_map() -> dict:
         ).mappings().all()
     return {r["industry_code"]: r["industry_name"] for r in rows}
 
+@st.cache_data(ttl=3600)
+def _industry_options() -> list[tuple[str, str]]:
+    """예비창업자 패널의 업종 선택 드롭다운용. 모델링 제외 업종군(3-2 문서:
+    과학·기술/부동산/시설관리·임대)은 후보에서 제외."""
+    engine = get_engine()
+    if engine is None:
+        return []
+    sql = text(
+        "SELECT industry_code, industry_name, custom_group FROM industries ORDER BY industry_name"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql).mappings().all()
+    return [
+        (r["industry_code"], r["industry_name"])
+        for r in rows
+        if not ui.is_excluded_industry(r["custom_group"])
+    ]
+
+
+@st.cache_data(ttl=3600)
+def _top_dongs_for_industry(industry_code: str, top_n: int = 3) -> list[dict]:
+    """특정 업종 기준 동별 실측 생존율 랭킹 — 모델 연동 전 임시 대체값
+    (_dong_survival_proxy와 동일한 패턴: store_snapshots.is_closed_next 실측 평균).
+    표본 5건 미만인 동은 노이즈가 커서 제외."""
+    engine = get_engine()
+    if engine is None:
+        return []
+    sql = text(
+        """
+        SELECT dong_code, COUNT(*) AS n,
+               1 - AVG(CASE WHEN is_closed_next THEN 1 ELSE 0 END) AS survival_rate
+        FROM store_snapshots
+        WHERE industry_code = :industry_code
+        GROUP BY dong_code
+        HAVING n >= 5
+        ORDER BY survival_rate DESC
+        LIMIT :top_n
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"industry_code": industry_code, "top_n": top_n}).mappings().all()
+    names = _dong_name_map()
+    return [
+        {
+            "dong_code": r["dong_code"],
+            "dong_name": names.get(r["dong_code"], r["dong_code"]),
+            "n": float(r["n"]),
+            "survival_rate": float(r["survival_rate"]),
+        }
+        for r in rows
+    ]
+
 
 @st.cache_data(ttl=3600)
 def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list[dict]:
-    """업종전환 추천(2026-08-28 추가): industry_survival_stats에서 현재 업종(from) 기준
-    생존율(survival_rate) 높은 순으로 전환 후보(to)를 뽑는다. 3-2 문서 규칙대로 모델링
-    제외 업종군(과학·기술/부동산/시설관리·임대)은 전환 "목적지"로 추천하면 안 되므로
-    industries.custom_group으로 걸러낸다(ui.is_excluded_industry 재사용)."""
+    """업종전환 추천(2026-08-28 추가, 2026-08-28 Wilson 하한 정렬로 수정):
+    industry_survival_stats에서 현재 업종(from) 기준 전환 후보(to)를 뽑는다.
+    survival_rate 원값으로 정렬하면 표본 1~2건짜리가 우연히 100%를 찍고 1위를
+    차지하는 문제가 있어서(예: "중고 상품 소매업 100점, 표본 1건 기준"), Wilson
+    score 하한으로 정렬한다 — 표본이 적을수록 점수가 보수적으로 깎인다. 3-2 문서
+    규칙대로 모델링 제외 업종군(과학·기술/부동산/시설관리·임대)은 전환 "목적지"로
+    추천하면 안 되므로 industries.custom_group으로 걸러낸다(ui.is_excluded_industry 재사용)."""
     engine = get_engine()
     if engine is None:
         return []
@@ -107,12 +176,21 @@ def _industry_switch_recommendations(industry_code: str, top_n: int = 3) -> list
         JOIN industries i ON i.industry_code = s.to_industry_code
         WHERE s.from_industry_code = :industry_code
           AND s.to_industry_code != :industry_code
-        ORDER BY s.survival_rate DESC
         """
     )
     with engine.connect() as conn:
         rows = conn.execute(sql, {"industry_code": industry_code}).mappings().all()
-    recs = [dict(r) for r in rows if not ui.is_excluded_industry(r["custom_group"])]
+
+    recs = []
+    for r in rows:
+        if ui.is_excluded_industry(r["custom_group"]):
+            continue
+        d = dict(r)
+        d["wilson_score"] = _wilson_lower_bound(float(r["survival_rate"]), int(r["sample_size"]))
+        d["low_confidence"] = r["sample_size"] < 30  # dong_industry_historical_rate와 동일 기준(30건) 재사용
+        recs.append(d)
+
+    recs.sort(key=lambda x: x["wilson_score"], reverse=True)
     return recs[:top_n]
 
 
@@ -153,7 +231,9 @@ def _hot_keyword_ranking(top_n: int = 3) -> list[dict]:
     """관리자 대시보드(pages/admin_dashboard.py의 "지금 뜨는 사업" 탭)에서 이미 쓰던
     trend_keywords 기반 랭킹을 GUEST 메인화면에서도 재사용. "지금 뜨는 동네" 카드를
     3위까지만 보여주기로 하면서 그 밑이 비니, "밑에는 좀 다른걸 채우는건 어떤지 —
-    인기 순위 뭐 이런것도 해놨으니까"(2026-08-27, 사용자 요청)에 따라 채워 넣음."""
+    인기 순위 뭐 이런것도 해놨으니까"(2026-08-27, 사용자 요청)에 따라 채워 넣음.
+    2026-08-28 수정: 최초 스냅샷 매장수(first_store_count)도 같이 조회해서
+    "19개 → 54개"처럼 증가 흐름을 보여줄 수 있게 함(비율만으론 설득력이 부족하다는 피드백)."""
     engine = get_engine()
     if engine is None:
         return []
@@ -164,16 +244,32 @@ def _hot_keyword_ranking(top_n: int = 3) -> list[dict]:
         rows = conn.execute(
             text(
                 """
-                SELECT keyword, store_count, growth_rate
-                FROM trend_keywords
-                WHERE snapshot_date = :latest
-                ORDER BY growth_rate DESC
+                SELECT t.keyword, t.store_count, t.growth_rate,
+                       (SELECT t2.store_count FROM trend_keywords t2
+                        WHERE t2.keyword = t.keyword
+                        ORDER BY t2.snapshot_date ASC LIMIT 1) AS first_store_count
+                FROM trend_keywords t
+                WHERE t.snapshot_date = :latest
+                ORDER BY t.growth_rate DESC
                 LIMIT :n
                 """
             ),
             {"latest": latest, "n": top_n},
         ).mappings().all()
     return [dict(r) for r in rows]
+
+@st.cache_data(ttl=3600)
+def _citywide_survival_avg() -> float | None:
+    """_dong_survival_proxy를 재사용해서 서울 전체 가중평균 생존율을 계산.
+    개별 동 카드에 "이 동네가 평균보다 높은지" 비교 기준선을 주기 위함."""
+    points = _dong_survival_proxy()
+    if not points:
+        return None
+    total_n = sum(p["n"] for p in points)
+    if total_n == 0:
+        return None
+    weighted = sum(p["survival_rate"] * p["n"] for p in points)
+    return weighted / total_n * 100
 
 
 @st.cache_data(ttl=3600)
@@ -199,11 +295,14 @@ def _hot_dong_ranking(top_n: int = 5) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(sql, {"cutoff": cutoff}).mappings().all()
 
-    names = _dong_name_map()
-    scored = []
-    for r in rows:
-        new_ratio = r["new_stores"] / r["total_stores"]
-        survival_ratio = 1 - (r["closed_stores"] / r["total_stores"])
+        names = _dong_name_map()
+        scored = []
+        for r in rows:
+            total_stores = float(r["total_stores"])
+            new_stores = float(r["new_stores"])
+            closed_stores = float(r["closed_stores"])
+            new_ratio = new_stores / total_stores
+            survival_ratio = 1 - (closed_stores / total_stores)
         # growth_slope는 아직 빠져있음(모듈 docstring 참고) — 두 지표 단순 평균.
         hot_index = (new_ratio + survival_ratio) / 2
         scored.append(
@@ -211,6 +310,9 @@ def _hot_dong_ranking(top_n: int = 5) -> list[dict]:
                 "dong_code": r["dong_code"],
                 "dong_name": names.get(r["dong_code"], r["dong_code"]),
                 "new_ratio": new_ratio,
+                "survival_ratio": survival_ratio,
+                "total_stores": r["total_stores"],
+                "new_stores": r["new_stores"],
                 "hot_index": hot_index,
             }
         )
@@ -225,7 +327,7 @@ def _owner_latest_snapshot(store_id: str) -> dict | None:
         return None
     sql = text(
         """
-        SELECT lat, lng, dong_code, industry_code, store_name
+        SELECT snapshot_date, lat, lng, dong_code, industry_code, store_name
         FROM store_snapshots WHERE store_id = :store_id
         ORDER BY snapshot_date DESC LIMIT 1
         """
@@ -234,6 +336,24 @@ def _owner_latest_snapshot(store_id: str) -> dict | None:
         row = conn.execute(sql, {"store_id": store_id}).mappings().first()
     return dict(row) if row else None
 
+
+@st.cache_data(ttl=600)
+def _owner_competition_density(store_id: str, snapshot_date: str) -> dict | None:
+    """spatial_density_features(반경 300m 내 동일업종/전체 매장 수, 20m 내 클러스터
+    크기)를 owner 패널에서 활용 — 있는 데이터인데 화면에서 안 쓰고 있던 부분."""
+    engine = get_engine()
+    if engine is None:
+        return None
+    sql = text(
+        """
+        SELECT same_industry_count_300m, total_count_300m, coord_cluster_size
+        FROM spatial_density_features
+        WHERE store_id = :store_id AND snapshot_date = :snapshot_date
+        """
+    )
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"store_id": store_id, "snapshot_date": snapshot_date}).mappings().first()
+    return dict(row) if row else None
 
 @st.cache_data(ttl=3600)
 def _population_feature(dong_code: str) -> dict | None:
@@ -251,6 +371,29 @@ def _population_feature(dong_code: str) -> dict | None:
         row = conn.execute(sql, {"dong_code": dong_code}).mappings().first()
     return dict(row) if row else None
 
+@st.cache_data(ttl=3600)
+def _dong_top_industries(dong_code: str, top_n: int = 3) -> list[dict]:
+    """지역상세 패널용 — 해당 동에 실제로 많은 업종 구성(최신 스냅샷 기준 매장수
+    순위). 모델 배치추론이 필요한 "업종별 생존점수 랭킹"(ui-logic.md 4번)과는
+    다르게, 이건 이미 있는 store_snapshots만으로 바로 보여줄 수 있는 실측 데이터."""
+    engine = get_engine()
+    if engine is None:
+        return []
+    sql = text(
+        """
+        SELECT s.industry_code, i.industry_name, COUNT(*) AS n
+        FROM store_snapshots s
+        JOIN industries i ON i.industry_code = s.industry_code
+        WHERE s.dong_code = :dong_code
+          AND s.snapshot_date = (SELECT MAX(snapshot_date) FROM store_snapshots)
+        GROUP BY s.industry_code, i.industry_name
+        ORDER BY n DESC
+        LIMIT :top_n
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"dong_code": dong_code, "top_n": top_n}).mappings().all()
+    return [{"industry_name": r["industry_name"], "n": float(r["n"])} for r in rows]
 
 def _latest_owner_prediction(store_id: str) -> dict | None:
     """predictions 캐시 조회만 한다 (ui-logic.md 3번). 캐시가 없을 때 그 자리에서
@@ -573,24 +716,29 @@ def _rank_card(badge: str, title: str, pill_text: str, caption: str,
 
 
 def _render_hot_dong_panel():
-    """"카드가 밋밋해서 볼품없다"(1차) → 순위 뱃지(🥇🥈🥉)+초록 알약으로 꾸몄더니
-    이번엔 "4위/5위는 뱃지 없이 텍스트뿐이라 안 맞는다"는 피드백(2026-08-27,
-    스크린샷) — 뱃지 있는 카드(1~3위)와 없는 카드(4~5위)가 한 목록에 섞여서
-    스타일이 안 맞아 보였음. 그래서 "지금 뜨는 동네"는 뱃지가 자연스러운 3위까지만
-    보여주고, 그 아래 빈 공간은 사용자 제안대로("밑에는 좀 다른걸 채우는건 어떤지,
-    인기 순위 뭐 이런것도 해놨으니까") 이미 admin 대시보드에 만들어둔 trend_keywords
-    기반 "지금 뜨는 업종" 랭킹을 같은 카드 스타일로 재사용해서 채움(_hot_keyword_ranking)."""
+    """"카드가 밋밋해서 볼품없다"(1차) → 순위 뱃지+알약(2차) → 4/5위 스타일 안맞음
+    → 3위까지만+"지금 뜨는 업종" 추가(3차)를 거쳐, 비율만 있고 실제 모수가 없어서
+    설득력이 떨어진다는 피드백(2026-08-28)에 따라 구체적 숫자(총 매장수, 서울
+    평균 대비)를 캡션에 추가."""
     st.subheader("지금 뜨는 동네")
+    citywide_avg = _citywide_survival_avg()
     ranking = _hot_dong_ranking(top_n=3)
     if not ranking:
         st.caption("아직 집계할 데이터가 부족해요.")
     else:
         for i, r in enumerate(ranking):
+            caption = (
+                f"총 {r['total_stores']}곳 중 최근 3개월 신규 {r['new_stores']}곳 "
+                f"· 생존율 {r['survival_ratio'] * 100:.0f}%"
+            )
+            if citywide_avg is not None:
+                diff = r["survival_ratio"] * 100 - citywide_avg
+                caption += f" (서울 평균 대비 {'+' if diff >= 0 else ''}{diff:.0f}%p)"
             _rank_card(
                 badge=_RANK_BADGES[i],
                 title=r["dong_name"],
                 pill_text=f"▲ {r['new_ratio'] * 100:.0f}%",
-                caption="최근 3개월 신규매장 비율",
+                caption=caption,
             )
 
     st.subheader("지금 뜨는 업종")
@@ -606,14 +754,53 @@ def _render_hot_dong_panel():
                 pill_text, pill_bg, pill_color = f"{growth * 100:+.0f}%", "#e8f5e9", "#2e7d32"
             else:
                 pill_text, pill_bg, pill_color = f"{growth * 100:+.0f}%", "#ffebee", "#c62828"
+
+            first_count = k.get("first_store_count")
+            if first_count and first_count != k["store_count"]:
+                caption = f"매장수 {first_count}개 → {k['store_count']}개"
+            else:
+                caption = f"매장수 {k['store_count']}개"
+
             _rank_card(
                 badge=_RANK_BADGES[i],
                 title=k["keyword"],
                 pill_text=pill_text,
-                caption=f"매장수 {k['store_count']}개",
+                caption=caption,
                 pill_bg=pill_bg,
                 pill_color=pill_color,
             )
+
+
+def _render_new_member_panel():
+    """예비창업자(NEW_MEMBER) 전용 패널 — 로그인 안 한 GUEST와 화면이 완전히
+    똑같다는 피드백(2026-08-28) 반영. 아직 가게가 없어 OWNER처럼 "내 가게 기준"
+    분석은 못 주지만, "관심 업종을 고르면 그 업종이 잘 되는 동네를 보여주는"
+    예비창업자 맞춤 탐색 기능을 추가해서 GUEST와 차별화한다."""
+    st.subheader("관심 업종으로 동네 찾기")
+    options = _industry_options()
+    if not options:
+        st.caption("업종 데이터를 불러올 수 없어요.")
+    else:
+        labels = [name for _, name in options]
+        codes = [code for code, _ in options]
+        idx = st.selectbox(
+            "관심 업종을 선택해보세요", range(len(labels)), format_func=lambda i: labels[i]
+        )
+        selected_code = codes[idx]
+        top_dongs = _top_dongs_for_industry(selected_code, top_n=3)
+        if not top_dongs:
+            st.caption("이 업종은 아직 데이터가 부족해요.")
+        else:
+            for i, d in enumerate(top_dongs):
+                _rank_card(
+                    badge=_RANK_BADGES[i],
+                    title=d["dong_name"],
+                    pill_text=f"{d['survival_rate'] * 100:.0f}점",
+                    caption=f"{labels[idx]} 매장 {d['n']:.0f}곳 기준",
+                )
+
+    st.divider()
+    _render_hot_dong_panel()
 
 
 def _render_owner_panel(user: dict, snapshot: dict | None):
@@ -633,9 +820,32 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
             if pop["tourist_zone_candidate"]:
                 st.caption("관광 특수 지역으로 분류돼요(단기체류 외국인 비중 상위권).")
 
+    # 반경 300m 내 경쟁 밀도(2026-08-28 추가) — spatial_density_features는 이미
+    # 스키마에 있던 피처인데 owner 패널에서 안 쓰고 있었음.
+    density = _owner_competition_density(user["store_id"], snapshot["snapshot_date"])
+    if density:
+        with st.container(border=True):
+            st.markdown("**주변 경쟁 강도 (반경 300m)**")
+            ratio = (
+                density["same_industry_count_300m"] / density["total_count_300m"] * 100
+                if density["total_count_300m"] else 0
+            )
+            st.caption(
+                f"동일업종 {density['same_industry_count_300m']}곳 / 전체 {density['total_count_300m']}곳 "
+                f"(동일업종 비중 {ratio:.0f}%)"
+            )
+            if density["coord_cluster_size"] and density["coord_cluster_size"] >= 3:
+                st.caption(f"복합상가·건물 추정 — 반경 20m 내 매장 {density['coord_cluster_size']}곳")
+
     pred = _latest_owner_prediction(user["store_id"])
     if pred:
         score = ui.proba_to_survival_score(float(pred["score"]))
+        # 동 평균 대비 비교(2026-08-28 추가) — GUEST 지도용으로 이미 캐싱된
+        # _dong_survival_proxy를 재사용, DB를 더 안 때림.
+        dong_avg = next(
+            (p["survival_rate"] * 100 for p in _dong_survival_proxy() if p["dong_code"] == snapshot["dong_code"]),
+            None,
+        )
         shap_lines = None
         raw_shap = pred.get("shap_top_features")
         if raw_shap:
@@ -647,6 +857,9 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
                 for f in feats
             ]
         ui.score_card("내 업종 생존점수", score, shap_lines=shap_lines)
+        if dong_avg is not None:
+            diff = score - dong_avg
+            st.caption(f"우리 동네 평균({dong_avg:.0f}점) 대비 {'+' if diff >= 0 else ''}{diff:.0f}점")
     else:
         # 모델이 아직 앱에 연동되지 않아 predictions가 비어있는 동안은 안내 문구 없이
         # 공란으로 둔다(2026-08-28 사용자 요청: "shap이나 모델 데이터로 못하는건
@@ -661,11 +874,16 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
     recs = _industry_switch_recommendations(snapshot["industry_code"], top_n=3)
     if recs:
         for r in recs:
-            switch_score = round(float(r["survival_rate"]) * 100)
+            # survival_rate 원값이 아니라 Wilson 하한 기반 점수 — 표본 1~2건짜리가
+            # 100점으로 부풀려지는 문제 해결(2026-08-28, _industry_switch_recommendations 참고).
+            switch_score = round(r["wilson_score"] * 100)
+            caveat = f"표본 {r['sample_size']}건 기준"
+            if r["low_confidence"]:
+                caveat = f"⚠️ 표본 {r['sample_size']}건 — 신뢰도 낮음, 참고만 하세요"
             ui.score_card(
                 title=r["industry_name"],
                 survival_score=switch_score,
-                extra_caveat=f"표본 {r['sample_size']}건 기준",
+                extra_caveat=caveat,
             )
         ui.short_term_switch_caveat()
     else:
@@ -690,10 +908,36 @@ def _render_region_detail_panel(clicked: dict):
         score = round(match["survival_rate"] * 100)
         ui.grade_badge(score)
         ui.confidence_notice()
+        # 서울 전체 평균 대비 비교(2026-08-28 추가) — "지금 뜨는 동네" 패널과
+        # 동일한 기준선(_citywide_survival_avg) 재사용.
+        citywide_avg = _citywide_survival_avg()
+        if citywide_avg is not None:
+            diff = score - citywide_avg
+            st.caption(f"서울 평균({citywide_avg:.0f}점) 대비 {'+' if diff >= 0 else ''}{diff:.0f}점")
 
+    # 유동인구 — 평균 한 줄이 아니라 내국인/장기·단기체류 외국인 구성을 나눠서
+    # 보여주고(2026-08-28, "너무 아쉽네 살짝 더 잘 보여질 수 있을거 같은데" 피드백),
+    # 관광특구 후보 플래그도 같이 노출.
     pop = _population_feature(dong_code)
     if pop:
-        st.caption(f"유동인구 평균 {pop['total_pop_avg']:.0f}명")
+        with st.container(border=True):
+            st.markdown("**유동인구**")
+            st.caption(
+                f"내국인 {pop['korean_pop']:.0f}명 · 장기체류 외국인 {pop['foreign_long_pop']:.0f}명 "
+                f"· 단기체류 외국인 {pop['foreign_short_pop']:.0f}명 (평균 {pop['total_pop_avg']:.0f}명)"
+            )
+            if pop["tourist_zone_candidate"]:
+                st.caption("관광 특수 지역으로 분류돼요(단기체류 외국인 비중 상위권).")
+
+    # 이 동네 실제 업종 구성 — store_snapshots 실측 데이터라 모델 없이 바로
+    # 보여줄 수 있음(2026-08-28 추가). 업종별 생존점수 랭킹(ui-logic.md 4번, 모델
+    # 배치추론 필요)과는 별개로, "여기 뭐가 많은지"를 보여주는 참고 정보.
+    top_industries = _dong_top_industries(dong_code, top_n=3)
+    if top_industries:
+        with st.container(border=True):
+            st.markdown("**이 동네 주요 업종**")
+            for ind in top_industries:
+                st.caption(f"{ind['industry_name']} · {ind['n']:.0f}곳")
 
     # 업종별 생존점수 랭킹(ui-logic.md 4번)은 전체 업종 배치 추론(모델)이 필요해서
     # 아직 못 채움 — 안내 문구 없이 공란으로 둔다(2026-08-28 사용자 요청: "shap이나
@@ -732,9 +976,10 @@ def _inject_layout_css():
 
 def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None):
     """예전엔 로그인 상태를 사이드바에 표시했는데(2026-08-27), 사이드바 자체를
-    없애면서(2026-08-28) 상단 헤더 행으로 옮겼다. 마이페이지는 여전히 링크하지
-    않는다 — 다른 팀원이 작업 중이라 경로가 안정적이지 않다는 이유는 그대로다
-    (11차 변경 사유 참고)."""
+    없애면서(2026-08-28) 상단 헤더 행으로 옮겼다. 마이페이지 이동 버튼은 owner/founder
+    로그인 시 노출한다(2026-08-28 요청) — 단, 다른 팀원이 작업 중인 페이지라 파일이
+    실제로 있을 때만 보여준다(_MY_PAGE_EXISTS, 위 참고). URL이 /mypage로 나오려면
+    파일명이 mypage.py여야 함(Streamlit은 파일명을 그대로 URL 슬러그로 씀)."""
     col_brand, col_auth = st.columns([8, 2])
     with col_brand:
         st.markdown("### 📍 서울 상권 폐업예측")
@@ -754,8 +999,11 @@ def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None
             if st.button("로그아웃", key="top_logout"):
                 auth.logout()
                 st.rerun()
+
     if mode == "ADMIN":
         st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동", icon="➡️")
+    elif mode in ("OWNER", "NEW_MEMBER") and _MY_PAGE_EXISTS:
+        st.page_link("pages/mypage.py", label="마이페이지로 이동", icon="➡️")
 
 
 # ---------------------------------------------------------------
@@ -808,6 +1056,11 @@ def main():
                 st.session_state["region_click"] = None
                 st.rerun()
             _render_region_detail_panel(clicked)
+
+        elif mode == "NEW_MEMBER":
+        # GUEST와 완전히 동일한 화면이라는 피드백(2026-08-28) — 예비창업자
+        # 전용 "관심 업종으로 동네 찾기" 탐색 기능을 위에 추가한 패널로 분리.
+            _render_new_member_panel()
         else:
             _render_hot_dong_panel()
 
