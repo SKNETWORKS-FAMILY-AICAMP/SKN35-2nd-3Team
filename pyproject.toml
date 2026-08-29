@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "catboost>=1.2.10",
+    "certifi>=2026.7.22",
+    "cryptography>=50.0.1",
     "fastapi>=0.141.1",
+    "folium>=0.20.0",
     "imbalanced-learn>=0.14.2",
     "ipykernel>=7.3.0",
     "joblib>=1.5.3",
@@ -26,9 +29,11 @@ dependencies = [
     "shap>=0.52.0",
     "sqlalchemy>=2.0.52",
     "streamlit>=1.62.0",
+    "streamlit-folium>=0.27.4",
     "torch>=2.4",
     "torchaudio>=2.4",
     "torchvision>=0.19",
+    "tqdm>=4.70.0",
     "uvicorn>=0.52.4",
     "xgboost>=3.4.1",
 ]

@@ -200,3 +200,58 @@ CREATE TABLE support_actions (
     FOREIGN KEY (store_id) REFERENCES stores(store_id),
     FOREIGN KEY (admin_user_id) REFERENCES users(user_id)
 );
+
+-- ============================================================
+-- dong_view_stats: 지도 클릭(지역상세 조회) 카운팅 전용 테이블
+-- ============================================================
+-- 목적: 기존점주(owner)/예비창업자(founder)가 지도에서 동을 클릭해
+--       지역상세 패널을 볼 때마다 카운트를 올려서, 관리자 대시보드에서
+--       "인기 조회지역"을 보여주기 위함.
+--
+-- 설계 원칙:
+--   - predictions 테이블과 완전히 독립적. 모델/추론 로직과 무관하게
+--     동작해야 하고(클릭마다 실행되는 경량 카운터), FK도 최소화해서
+--     쓰기 비용을 낮춤(model_id/user_id 같은 무거운 FK 없음).
+--   - 게스트(비로그인)는 집계 대상에서 제외 -> 카운트 여부 판단에만 쓰고
+--     저장은 안 함 (owner/founder면 카운트, 그 외는 그냥 무시).
+--   - owner/founder 구분은 관리자 화면에서 안 쓰기로 함 -> 굳이 나눠 저장할
+--     이유가 없어서 user_type 컬럼 자체를 없애고 dong_code 하나당 딱 1행만
+--     존재하는 단순 카운터로 설계. (나중에 구분이 필요해지면 그때 컬럼 추가)
+--   - dong_code를 PK로 잡아서 UPSERT 1건으로 증가만 하면 됨.
+
+CREATE TABLE IF NOT EXISTS dong_view_stats (
+    dong_code       VARCHAR(20)                  NOT NULL,
+    view_count      INT                           NOT NULL DEFAULT 0,
+    last_viewed_at  DATETIME                      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                    ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (dong_code),
+    FOREIGN KEY (dong_code) REFERENCES administrative_dongs(dong_code)
+);
+
+
+-- ============================================================
+-- user_view_history: 로그인 유저별 "내가 클릭해서 본 지역" 기록
+-- ============================================================
+-- 목적: 예비창업자(founder)/기존점주(owner) 마이페이지에서 "내가 본 지역"
+--       목록을 보여주기 위함. dong_view_stats(관리자용 전체 합계)와 짝을
+--       이루는 개인용 버전 — 구조는 거의 같고 user_id만 추가됨.
+--
+-- 설계 원칙:
+--   - predictions/모델 추론과 완전히 무관. 클릭 = 이 테이블 UPSERT 1건으로 끝.
+--   - 게스트(비로그인)는 user_id가 없어서 애초에 기록 대상이 아님(로그인
+--     상태에서만 이 테이블에 씀 — 호출부에서 로그인 여부로 걸러줘야 함,
+--     dong_view_stats처럼 "잘못된 값이면 조용히 무시"하는 방식으로 구현할 것).
+--   - (user_id, dong_code) 조합을 PK로 잡아서, 같은 사람이 같은 동을 여러 번
+--     클릭해도 행 하나만 유지되고 view_count/last_viewed_at만 갱신됨
+--     (마이페이지에 "최근 본 지역"을 최신순으로 보여주기에 충분).
+ 
+CREATE TABLE IF NOT EXISTS user_view_history (
+    user_id         VARCHAR(30)                  NOT NULL,
+    dong_code       VARCHAR(20)                  NOT NULL,
+    view_count      INT                           NOT NULL DEFAULT 0,
+    last_viewed_at  DATETIME                      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                    ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, dong_code),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (dong_code) REFERENCES administrative_dongs(dong_code)
+);
