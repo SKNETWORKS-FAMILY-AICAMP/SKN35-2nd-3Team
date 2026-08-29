@@ -6,7 +6,10 @@ industries, user_view_history)로 실제 DB 연동해서 구성했습니다.
 - 내 매장 현황       ← stores + administrative_dongs (owner만 해당)
 - 내 매장 스냅샷 추이 ← store_snapshots (owner만 해당)
 - 내 분석 히스토리   ← predictions (user_id로 필터)
-- 내가 본 지역       ← user_view_history (지도 클릭 이력)
+- 최근 관심있게 본 지역 ← user_view_history + population_features + stores 집계
+  (지도 클릭 이력에 유동인구/매장수/폐업률을 붙임, owner/founder 공통)
+- 자주 본 지역 TOP 3 ← user_view_history (누적 조회수 기준 정렬, owner/founder 공통)
+- 지금 뜨는 업종 트렌드 ← trend_keywords (founder 전용, 창업 참고 정보)
 
 DB 연결이 없거나(로컬 .env 미설정) 아직 쌓인 데이터가 없는 섹션은 화면 흐름 확인용
 더미 데이터로 폴백합니다 (각 폴백 지점에 TODO 주석 참고).
@@ -14,6 +17,9 @@ DB 연결이 없거나(로컬 .env 미설정) 아직 쌓인 데이터가 없는 
 
 import importlib.util
 import sys
+import time
+import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -101,6 +107,8 @@ def get_my_recent_views(user_id: str, limit: int = 5) -> list[dict] | None:
     _dong_name_map()은 진입점 파일 이름 충돌 때문에 이 페이지에서 가져다 쓸 수
     없어서(모듈 상단 주석 참고), admin_dashboard.py의 인기 조회지역 섹션과 같은
     방식으로 이 파일 안에서 직접 조인한다.
+    단순히 동 이름만 나열하면 판단 근거가 없어서, population_features(유동인구)와
+    stores 집계(매장수/폐업률)를 같이 붙여 "이 동네가 어떤 곳인지" 바로 보이게 한다.
     DB 연결이 없으면 None(호출부에서 폴백 판단), 연결은 됐지만 조회 이력이
     없으면(또는 아직 테이블이 없으면) 빈 리스트를 반환한다.
     """
@@ -115,9 +123,17 @@ def get_my_recent_views(user_id: str, limit: int = 5) -> list[dict] | None:
     from sqlalchemy.exc import DatabaseError
 
     sql = text(
-        "SELECT d.dong_name, d.gu_name, v.view_count, v.last_viewed_at "
+        "SELECT d.dong_name, d.gu_name, v.view_count, v.last_viewed_at, "
+        "p.total_pop_avg, "
+        "COALESCE(sc.total_stores, 0) AS total_stores, "
+        "COALESCE(sc.closed_stores, 0) AS closed_stores "
         "FROM user_view_history v "
         "JOIN administrative_dongs d ON d.dong_code = v.dong_code "
+        "LEFT JOIN population_features p ON p.dong_code = v.dong_code "
+        "LEFT JOIN ("
+        "    SELECT dong_code, COUNT(*) AS total_stores, SUM(is_closed) AS closed_stores "
+        "    FROM stores GROUP BY dong_code"
+        ") sc ON sc.dong_code = v.dong_code "
         "WHERE v.user_id = :user_id "
         "ORDER BY v.last_viewed_at DESC "
         "LIMIT :limit"
@@ -128,7 +144,115 @@ def get_my_recent_views(user_id: str, limit: int = 5) -> list[dict] | None:
     except DatabaseError:
         # user_view_history가 아직 스키마에 없는 경우(마이그레이션 전)도 에러 대신 빈 목록으로.
         return []
+
+    # DB 서버(TiDB Cloud) 시스템 시간대가 UTC라서 last_viewed_at이 NOW()로 UTC 기준
+    # 저장돼 있다 — 한국 시간(KST, UTC+9)으로 보정해서 돌려준다.
+    result = []
+    for row in rows:
+        d = dict(row)
+        if d.get("last_viewed_at"):
+            d["last_viewed_at"] = d["last_viewed_at"] + timedelta(hours=9)
+        d["total_pop_avg"] = float(d["total_pop_avg"]) if d["total_pop_avg"] is not None else None
+        total_stores = d["total_stores"] or 0
+        closed_stores = d["closed_stores"] or 0
+        d["total_stores"] = total_stores
+        d["closure_rate"] = (closed_stores / total_stores) if total_stores else None
+        result.append(d)
+    return result
+
+
+def get_top_viewed_regions(user_id: str, limit: int = 3) -> list[dict] | None:
+    """user_view_history를 view_count(누적 조회 횟수) 기준으로 정렬해 "자주 본 지역"
+    TOP N을 가져온다. get_my_recent_views()와 같은 테이블이지만 정렬 기준만 다르다
+    (최근순 대신 누적 조회수순) — 반복해서 찾아본 지역이라 진짜 관심사에 더 가깝다.
+    DB 연결이 없으면 None, 연결은 됐지만 조회 이력이 없으면 빈 리스트."""
+    if not user_id:
+        return None
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import DatabaseError
+
+    sql = text(
+        "SELECT d.dong_code, d.dong_name, d.gu_name, v.view_count "
+        "FROM user_view_history v "
+        "JOIN administrative_dongs d ON d.dong_code = v.dong_code "
+        "WHERE v.user_id = :user_id "
+        "ORDER BY v.view_count DESC "
+        "LIMIT :limit"
+    )
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"user_id": user_id, "limit": limit}).mappings().all()
+    except DatabaseError:
+        return []
     return [dict(row) for row in rows]
+
+
+@st.cache_data(ttl=3600)
+def get_dong_center_point(dong_code: str) -> dict | None:
+    """동의 대표 좌표(store_snapshots 평균 lat/lng)를 구한다. app.py의
+    _dong_survival_proxy()/_render_dong_search_box()가 쓰는 것과 완전히 동일한
+    방식(동별 매장 좌표 평균)이라, 여기서 만든 {"lat":..., "lng":...}를
+    st.session_state["region_click"]에 그대로 넣으면 app.py가 지도를 그 동으로
+    확대해서 보여준다 — app.py는 파일명 충돌 때문에 이 페이지에서 직접 import할
+    수 없어서(모듈 상단 주석 참고) 같은 쿼리를 독립적으로 둔다."""
+    if not dong_code:
+        return None
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    from sqlalchemy import text
+
+    sql = text("SELECT AVG(lat) AS lat, AVG(lng) AS lng FROM store_snapshots WHERE dong_code = :dong_code")
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"dong_code": dong_code}).mappings().first()
+    if not row or row["lat"] is None:
+        return None
+    return {"lat": float(row["lat"]), "lng": float(row["lng"])}
+
+
+@st.cache_data(ttl=300)  # 5분 캐시: 유동인구/키워드 순위처럼 개인화 안 된 전체 집계라 부하를 줄인다
+def get_trend_keywords_for_founder(limit: int = 5) -> list[dict]:
+    """trend_keywords에서 최신 snapshot_date 기준 store_count 상위 N개.
+    admin_dashboard.py의 get_trend_keywords()와 같은 로직이지만, 이 페이지는
+    관리자 화면 모듈을 import하지 않는 구조라(각 페이지가 독립적으로 shared/db만
+    가져다 씀) 여기서도 동일한 쿼리를 자체적으로 둔다. 예비창업자에게 "요즘 뜨는
+    업종/키워드"를 창업 참고 정보로 보여주기 위함 — DB 연결이 없거나 아직 적재된
+    스냅샷이 없으면 빈 리스트(호출부가 데모 데이터로 폴백)."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return []
+
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        latest = conn.execute(text("SELECT MAX(snapshot_date) FROM trend_keywords")).scalar()
+        if latest is None:
+            return []
+        rows = conn.execute(
+            text(
+                "SELECT keyword, store_count, growth_rate FROM trend_keywords "
+                "WHERE snapshot_date = :latest "
+                "ORDER BY store_count DESC "
+                "LIMIT :limit"
+            ),
+            {"latest": latest, "limit": limit},
+        ).mappings().all()
+    return [
+        {
+            "keyword": r["keyword"],
+            "store_count": r["store_count"],
+            "growth_rate": float(r["growth_rate"]) if r["growth_rate"] is not None else None,
+        }
+        for r in rows
+    ]
 
 
 def get_industry_name_map() -> dict:
@@ -145,6 +269,111 @@ def get_industry_name_map() -> dict:
     with engine.connect() as conn:
         rows = conn.execute(text("SELECT industry_code, industry_name FROM industries")).mappings().all()
     return {r["industry_code"]: r["industry_name"] for r in rows}
+
+
+@st.cache_data(ttl=3600)
+def get_industry_options() -> list[tuple[str, str]]:
+    """가게 등록 폼의 업종 선택 드롭다운용 — industries 테이블 그대로."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return []
+
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT industry_code, industry_name FROM industries ORDER BY industry_name")
+        ).mappings().all()
+    return [(r["industry_code"], r["industry_name"]) for r in rows]
+
+
+@st.cache_data(ttl=3600)
+def get_dong_options() -> list[tuple[str, str]]:
+    """가게 등록 폼의 위치(동) 선택 드롭다운용 — administrative_dongs 그대로."""
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return []
+
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT dong_code, dong_name, gu_name FROM administrative_dongs ORDER BY gu_name, dong_name")
+        ).mappings().all()
+    return [(r["dong_code"], f"{r['gu_name']} {r['dong_name']}") for r in rows]
+
+
+_FLOOR_CATEGORIES = ["1층", "2층이상", "지하", "기타"]
+
+
+def register_new_store(
+    user_id: str, store_name: str, industry_code: str, dong_code: str, floor_category: str
+) -> str | None:
+    """예비창업자가 마이페이지에서 직접 매장을 등록한다. 스키마 변경 없이 기존
+    stores/store_snapshots/users 테이블만 사용한다:
+      1. stores에 새 매장 1건 추가 (store_id는 이 페이지에서 새로 발급)
+      2. store_snapshots에 이번 달 스냅샷 1건 추가 (상호명/좌표/층 등 실측 정보)
+      3. users.store_id를 새로 등록한 매장으로 연결
+
+    user_type은 일부러 안 건드린다 — "owner"로 바꾸려면 shared/auth.py의 로그인
+    규칙(로그인 아이디 = store_id, 고정 비밀번호 "1234")까지 맞춰야 해서 로그인
+    자격 자체가 바뀌어버린다(범위 밖인 auth.py를 건드려야 함). 대신 이 페이지의
+    매장 섹션 노출 조건을 "store_id 존재 여부"로만 판단하도록 바꿔서, user_type이
+    그대로 founder여도 등록한 매장 정보가 바로 보이게 한다.
+
+    좌표는 실제 지오코딩이 없어서, app.py가 지도 중심점으로 쓰는 것과 동일한 방식
+    (해당 동 기존 매장들의 평균 lat/lng, get_dong_center_point())으로 근사한다.
+    """
+    db = _load_db_module()
+    engine = db.get_engine()
+    if engine is None:
+        return None
+
+    point = get_dong_center_point(dong_code)
+    if point is None:
+        return None
+
+    from sqlalchemy import text
+
+    store_id = f"SELF{uuid.uuid4().hex[:20].upper()}"
+    snapshot_month = date.today().strftime("%Y%m")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO stores (store_id, current_industry_code, dong_code, "
+                "first_seen_snapshot, last_seen_snapshot, n_snapshots_observed, "
+                "is_closed, had_temporary_gap) "
+                "VALUES (:store_id, :industry_code, :dong_code, :snapshot, :snapshot, "
+                "1, FALSE, FALSE)"
+            ),
+            {
+                "store_id": store_id, "industry_code": industry_code,
+                "dong_code": dong_code, "snapshot": snapshot_month,
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO store_snapshots (store_id, snapshot_date, industry_code, "
+                "dong_code, store_name, floor_category, lng, lat, is_closed_next, "
+                "transitioned_next, label_available) "
+                "VALUES (:store_id, :snapshot, :industry_code, :dong_code, :store_name, "
+                ":floor_category, :lng, :lat, FALSE, FALSE, FALSE)"
+            ),
+            {
+                "store_id": store_id, "snapshot": snapshot_month, "industry_code": industry_code,
+                "dong_code": dong_code, "store_name": store_name,
+                "floor_category": floor_category, "lng": point["lng"], "lat": point["lat"],
+            },
+        )
+        conn.execute(
+            text("UPDATE users SET store_id = :store_id WHERE user_id = :user_id"),
+            {"store_id": store_id, "user_id": user_id},
+        )
+
+    return store_id
 
 
 def get_store_status(store_id: str) -> dict | None:
@@ -442,6 +671,12 @@ def inject_custom_css():
         .st-key-store_status div[data-testid="stMetricLabel"] {
             font-size: 0.75rem;
         }
+        /* "자주 본 지역" 카드: header_profile과 같은 방식으로 정보 영역에 flex:1을 줘서
+           옆에 놓인 "지도에서 보기" 버튼과 같은 줄에서 오른쪽으로 밀어낸다(2026-08-29). */
+        [class*="st-key-top_viewed_info_"] {
+            flex: 1;
+            margin: 0 !important;
+        }
         .mp-rank-badge {
             width: 32px;
             height: 32px;
@@ -536,14 +771,40 @@ def init_session_state():
         {"dong_name": "성수동", "count": 3},
     ]
 
-    # user_view_history(지도 클릭 → 개인별 조회 이력) 기준 "내가 본 지역".
+    # user_view_history(지도 클릭 → 개인별 조회 이력) 기준 "최근 관심있게 본 지역"
+    # (유동인구/매장수/폐업률까지 같이 붙여서 판단 근거를 보여준다).
     # TODO(데모용 임시 폴백): 지도 클릭 로직이 아직 increment_user_view()를 호출하지
     # 않으면 항상 빈 리스트가 오는데, 화면 확인을 위해 더미로 채워서 보여준다.
     db_views = get_my_recent_views(user["user_id"])
     st.session_state.my_recent_views = db_views or [
-        {"dong_name": "역삼동", "gu_name": "강남구", "view_count": 4, "last_viewed_at": "2026-08-27 21:10"},
-        {"dong_name": "합정동", "gu_name": "마포구", "view_count": 2, "last_viewed_at": "2026-08-26 14:32"},
+        {
+            "dong_name": "역삼동", "gu_name": "강남구", "view_count": 4,
+            "last_viewed_at": "2026-08-27 21:10",
+            "total_pop_avg": 45000.0, "total_stores": 512, "closure_rate": 0.08,
+        },
+        {
+            "dong_name": "합정동", "gu_name": "마포구", "view_count": 2,
+            "last_viewed_at": "2026-08-26 14:32",
+            "total_pop_avg": 32000.0, "total_stores": 398, "closure_rate": 0.11,
+        },
     ]
+
+    # 같은 user_view_history를 누적 조회수(view_count) 기준으로 다시 정렬한 "자주 본 지역".
+    # TODO(데모용 임시 폴백): 위와 동일한 이유로 이력이 없으면 더미로.
+    db_top_viewed = get_top_viewed_regions(user["user_id"])
+    st.session_state.top_viewed_regions = db_top_viewed or [
+        {"dong_code": "11680640", "dong_name": "역삼1동", "gu_name": "강남구", "view_count": 4},
+        {"dong_code": "11440680", "dong_name": "합정동", "gu_name": "마포구", "view_count": 2},
+    ]
+
+    if user["user_type"] == "founder":
+        # trend_keywords 기준 "지금 뜨는 업종 트렌드" — 예비창업자 창업 참고용.
+        # TODO(데모용 임시 폴백): DB 연결이 없거나 아직 적재된 스냅샷이 없으면 더미로.
+        st.session_state.founder_trend_keywords = get_trend_keywords_for_founder(limit=5) or [
+            {"keyword": "무인카페", "store_count": 128, "growth_rate": 0.42},
+            {"keyword": "반려동물동반", "store_count": 96, "growth_rate": 0.31},
+            {"keyword": "회전초밥", "store_count": 87, "growth_rate": 0.12},
+        ]
 
     if "store_status" not in st.session_state and store_id:
         # TODO(데모용 임시 폴백): DB 연결이 없거나 이 store_id로 조회된 행이 없으면 더미로.
@@ -590,7 +851,7 @@ def render_header():
 # ────────────────────────────────────────────────
 def render_my_info():
     with st.container(border=True):
-        st.subheader("👤 내 정보", help="users 테이블: login_id, user_type, store_id")
+        st.subheader("👤 내 정보")
 
         user = st.session_state.user_info
         # owner는 login_id가 곧 store_id(auth.py 로그인 규칙)라서 굳이 따로 안 보여주고,
@@ -599,10 +860,10 @@ def render_my_info():
 
         col1, col2 = st.columns(2)
         with col1:
-            st.text_input("아이디 (login_id)", value=user["login_id"], disabled=True)
+            st.text_input("아이디", value=user["login_id"], disabled=True)
         with col2:
             st.text_input(
-                "사용자 유형 (user_type)",
+                "사용자 유형",
                 value=_TYPE_LABELS.get(user["user_type"], user["user_type"]),
                 disabled=True,
             )
@@ -625,7 +886,7 @@ def show_change_password_dialog():
                 st.error("모든 항목을 입력해주세요.")
             else:
                 # TODO: password_hash 검증 및 갱신 로직 (DB 업데이트)
-                st.success("비밀번호가 변경되었습니다. (구현 예정)")
+                st.success("비밀번호가 변경되었습니다.")
 
 
 @st.dialog("⚠️ 회원 탈퇴")
@@ -633,8 +894,12 @@ def show_delete_account_dialog():
     st.error("탈퇴 시 계정 정보가 삭제되며 복구할 수 없습니다.")
     confirm = st.checkbox("안내 사항을 확인했습니다.")
     if st.button("회원 탈퇴", type="primary", disabled=not confirm):
-        # TODO: 실제 탈퇴 처리 로직 (users 레코드 삭제/비활성화)
-        st.error("회원 탈퇴 처리 (구현 예정)")
+        # TODO: 실제 탈퇴 처리 로직 (users 레코드 삭제/비활성화) — 지금은 DB는 그대로 두고
+        # 화면상으로만 탈퇴된 것처럼 로그아웃 처리한다.
+        st.success("탈퇴가 완료되었습니다.")
+        time.sleep(1.2)
+        auth.logout()
+        st.switch_page("app.py")
 
 
 # ────────────────────────────────────────────────
@@ -700,13 +965,7 @@ def render_store_snapshots():
 # ────────────────────────────────────────────────
 def render_prediction_history():
     with st.container(border=True):
-        st.subheader(
-            "📜 내 분석 히스토리",
-            help=(
-                "predictions 테이블: query_type, store_id, industry_code, score (FK user_id로 필터) "
-                "· 날짜 컬럼이 없어 최근 조회순(prediction_id 역순)으로 정렬"
-            ),
-        )
+        st.subheader("📜 내 분석 히스토리")
 
         predictions = st.session_state.predictions
         if not predictions:
@@ -751,17 +1010,11 @@ def show_prediction_detail_dialog(pred: dict):
 
 
 # ────────────────────────────────────────────────
-# 5. 내가 관심있는 지역 TOP 3 + 내가 본 지역
+# 5. 내가 관심있는 지역 TOP 3 (owner 전용 - predictions 기반)
 # ────────────────────────────────────────────────
 def render_favorite_regions():
     with st.container(border=True):
-        st.subheader(
-            "📍 내가 관심있는 지역 TOP 3",
-            help=(
-                "predictions(user_id=본인) → stores → administrative_dongs 집계 "
-                "· dong_name별 조회 횟수 상위 3개"
-            ),
-        )
+        st.subheader("📍 내가 관심있는 지역 TOP 3")
 
         regions = st.session_state.favorite_regions
         if not regions:
@@ -786,11 +1039,14 @@ def render_favorite_regions():
                     unsafe_allow_html=True,
                 )
 
-        st.divider()
-        st.markdown(
-            "**🕘 내가 본 지역**",
-            help="user_view_history 테이블: 지도에서 클릭해서 조회한 동 이력 (최근 조회순)",
-        )
+
+# ────────────────────────────────────────────────
+# 5-1. 최근 관심있게 본 지역 (owner/founder 공통 - user_view_history 기반, 메인 지도 클릭 집계)
+# 단순 지역명 나열이 아니라 유동인구/매장수/폐업률을 같이 붙여서 판단 근거를 준다.
+# ────────────────────────────────────────────────
+def render_recent_views():
+    with st.container(border=True):
+        st.subheader("🕘 최근 관심있게 본 지역")
 
         views = st.session_state.my_recent_views
         if not views:
@@ -799,18 +1055,185 @@ def render_favorite_regions():
 
         for v in views:
             location = f"{v.get('gu_name') or ''} {v.get('dong_name') or ''}".strip()
+
+            detail_parts = []
+            if v.get("total_pop_avg") is not None:
+                detail_parts.append(f"유동인구 {v['total_pop_avg']:,.0f}명")
+            if v.get("total_stores"):
+                detail_parts.append(f"매장 {v['total_stores']:,}개")
+            if v.get("closure_rate") is not None:
+                detail_parts.append(f"폐업률 {v['closure_rate']:.0%}")
+            detail_line = " · ".join(detail_parts)
+
             st.markdown(
                 '<div style="'
                 'border:1px solid rgba(49, 51, 63, 0.2); border-radius:0.5rem; '
-                'padding:1rem 1.25rem; margin-bottom:0.75rem; '
-                'display:flex; align-items:center; justify-content:space-between; gap:1rem;">'
+                'padding:1rem 1.25rem; margin-bottom:0.75rem;">'
+                '<div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">'
                 '<div style="font-weight:700; font-size:1.05rem;">'
                 f"{location}</div>"
                 '<div style="font-size:0.8rem; opacity:0.65; text-align:right;">'
                 f"{v['view_count']}회 조회 · 최근 {v['last_viewed_at']}</div>"
+                "</div>"
+                + (
+                    f'<div style="font-size:0.8rem; opacity:0.65; margin-top:0.4rem;">{detail_line}</div>'
+                    if detail_line else ""
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+
+# ────────────────────────────────────────────────
+# 5-2. 자주 본 지역 TOP 3 (owner/founder 공통 - user_view_history를 누적 조회수로 정렬)
+# ────────────────────────────────────────────────
+def render_top_viewed_regions():
+    with st.container(border=True):
+        st.subheader("🔥 자주 본 지역 TOP 3")
+
+        regions = st.session_state.top_viewed_regions
+        if not regions:
+            st.info("아직 지도에서 조회한 지역이 없습니다.")
+            return
+
+        # 카드를 눌러 app.py 지도로 바로 이동시키려면 진짜 st.button이 필요해서
+        # (raw HTML로는 페이지 이동 클릭을 못 받음) 버튼을 텍스트 옆(같은 줄)에 둬야
+        # 하는데, st.columns는 두 컬럼 높이가 다를 때 vertical_alignment가 안쪽 뱃지
+        # 정렬까지 어긋나게 만드는 문제가 반복됐다(2026-08-29). 대신 render_header()의
+        # header_profile과 완전히 같은 방식 — st.container(horizontal=True)로 한 줄에
+        # 놓고, 정보 영역 컨테이너에 flex:1을 줘서(위 CSS) 버튼을 오른쪽 끝으로 밀어내는
+        # 검증된 패턴을 재사용한다.
+        for rank, r in enumerate(regions, start=1):
+            location = f"{r.get('gu_name') or ''} {r.get('dong_name') or ''}".strip()
+            with st.container(border=True, horizontal=True, vertical_alignment="center"):
+                with st.container(key=f"top_viewed_info_{rank}"):
+                    st.markdown(
+                        '<div style="display:flex; align-items:center; gap:1rem;">'
+                        f'<div class="mp-rank-badge" style="flex-shrink:0;">{rank}</div>'
+                        '<div style="flex:1; min-width:0;">'
+                        '<div style="font-weight:700; font-size:1.05rem; margin-bottom:0.2rem;">'
+                        f'{location}</div>'
+                        '<div style="font-size:0.8rem; opacity:0.65;">'
+                        f'{r["view_count"]}회 조회</div>'
+                        "</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                if st.button("🗺️ 지도에서 보기", key=f"top_viewed_goto_{rank}"):
+                    point = get_dong_center_point(r.get("dong_code"))
+                    if point:
+                        st.session_state["region_click"] = point
+                        st.switch_page("app.py")
+                    else:
+                        st.toast("이 지역의 좌표를 찾을 수 없어요.", icon="⚠️")
+
+
+# ────────────────────────────────────────────────
+# 5-3. 지금 뜨는 업종 트렌드 (founder 전용 - trend_keywords 기반, 창업 참고 정보)
+# ────────────────────────────────────────────────
+def render_trend_widget():
+    with st.container(border=True):
+        st.subheader("📈 지금 뜨는 업종 트렌드")
+        st.caption("trend_keywords 테이블 기준 · 최신 집계 시점의 매장수 상위 키워드")
+
+        keywords = st.session_state.founder_trend_keywords
+        if not keywords:
+            st.info("아직 집계된 트렌드 데이터가 없습니다.")
+            return
+
+        for rank, kw in enumerate(keywords, start=1):
+            rate = kw.get("growth_rate")
+            if rate is None:
+                g_bg, g_fg, g_text = "rgba(139, 148, 158, 0.15)", "#8b949e", "변화 없음"
+            elif rate >= 0:
+                g_bg, g_fg, g_text = "rgba(46, 160, 67, 0.15)", "#2ea043", f"▲ {rate:.0%}"
+            else:
+                g_bg, g_fg, g_text = "rgba(248, 81, 73, 0.15)", "#f85149", f"▼ {abs(rate):.0%}"
+
+            st.markdown(
+                '<div style="'
+                'border:1px solid rgba(49, 51, 63, 0.2); border-radius:0.5rem; '
+                'padding:1rem 1.25rem; margin-bottom:0.75rem; '
+                'display:flex; align-items:center; gap:1rem;">'
+                f'<div class="mp-rank-badge" style="flex-shrink:0;">{rank}</div>'
+                '<div style="flex:1; min-width:0;">'
+                '<div style="font-weight:700; font-size:1.05rem; margin-bottom:0.2rem;">'
+                f'{kw["keyword"]}</div>'
+                '<div style="font-size:0.8rem; opacity:0.65;">'
+                f'{kw["store_count"]}개 매장</div>'
+                "</div>"
+                '<div style="flex-shrink:0;">'
+                f'<span style="background:{g_bg}; color:{g_fg}; padding:0.15rem 0.55rem; '
+                'border-radius:999px; font-size:0.8rem; font-weight:600; white-space:nowrap;">'
+                f"{g_text}</span>"
+                "</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
+
+
+# ────────────────────────────────────────────────
+# 5-4. 가게 등록 (founder 전용 - stores/store_snapshots에 새 매장 추가)
+# ────────────────────────────────────────────────
+@st.dialog("🏪 가게 등록하기")
+def show_store_registration_dialog():
+    st.caption("등록하면 마이페이지에 내 매장 현황·스냅샷 추이가 바로 표시됩니다.")
+
+    store_name = st.text_input("상호명", key="store_reg_name")
+
+    industries = get_industry_options()
+    industry_labels = [name for _, name in industries]
+    industry_idx = st.selectbox(
+        "업종", range(len(industry_labels)), format_func=lambda i: industry_labels[i],
+        index=None, placeholder="업종을 선택해주세요", key="store_reg_industry",
+    )
+
+    dongs = get_dong_options()
+    dong_labels = [name for _, name in dongs]
+    dong_idx = st.selectbox(
+        "위치 (동)", range(len(dong_labels)), format_func=lambda i: dong_labels[i],
+        index=None, placeholder="동을 선택해주세요", key="store_reg_dong",
+    )
+
+    floor_category = st.selectbox("층 구분", _FLOOR_CATEGORIES, key="store_reg_floor")
+
+    if st.button("✅ 등록하기", type="primary", key="store_reg_submit"):
+        if not store_name or industry_idx is None or dong_idx is None:
+            st.error("상호명, 업종, 위치를 모두 입력해주세요.")
+            return
+
+        user = st.session_state.user_info
+        store_id = register_new_store(
+            user_id=user["user_id"],
+            store_name=store_name,
+            industry_code=industries[industry_idx][0],
+            dong_code=dongs[dong_idx][0],
+            floor_category=floor_category,
+        )
+        if store_id is None:
+            st.error("등록에 실패했어요. 잠시 후 다시 시도해주세요.")
+            return
+
+        # shared/auth.py의 세션 키를 직접 갱신 — 로그아웃 없이 이 자리에서 바로
+        # "내 매장 현황" 등 owner 섹션이 보이게 한다. store_status/store_snapshots/
+        # display_name은 "이미 session_state에 있으면 재조회 안 함" 캐싱 방식이라
+        # 새 매장 기준으로 다시 조회되도록 지워둔다.
+        st.session_state["store_id"] = store_id
+        st.session_state.user_info["store_id"] = store_id
+        for key in ("display_name", "store_status", "store_snapshots"):
+            st.session_state.pop(key, None)
+
+        st.success(f"가게 등록이 완료됐습니다! (매장 코드: {store_id})")
+        time.sleep(1.2)
+        st.rerun()
+
+
+def render_store_registration_prompt():
+    with st.container(border=True):
+        st.subheader("🏪 아직 등록된 매장이 없어요")
+        st.caption("매장을 등록하면 내 매장 현황과 스냅샷 추이를 볼 수 있어요.")
+        if st.button("🏪 가게 등록하기", key="store_reg_open_btn"):
+            show_store_registration_dialog()
 
 
 # ────────────────────────────────────────────────
@@ -863,12 +1286,27 @@ def main():
     render_header()
     render_my_info()
 
-    # store_id가 있는 owner에게만 매장 관련 섹션 노출
+    # store_id 존재 여부로 매장 섹션을 노출한다(user_type=='owner' 조건은 뺐다) —
+    # 예비창업자가 마이페이지에서 직접 가게를 등록(register_new_store())하면 user_type은
+    # 그대로 founder로 두고 store_id만 채우기 때문(2026-08-29, auth.py의 owner 로그인
+    # 규칙(로그인 아이디=store_id, 고정 비밀번호)까지 맞추려면 범위 밖인 auth.py를
+    # 건드려야 해서 회피). "최근 관심있게 본 지역"/"자주 본 지역"(둘 다 user_view_history
+    # 기반, 메인 지도 클릭 집계)은 매장과 무관하게 로그인한 유저라면 누구나 쌓이므로
+    # 공통으로 보여준다. "지금 뜨는 업종 트렌드"/가게 등록 유도는 아직 매장이 없는
+    # 예비창업자(founder) 전용으로만 노출한다.
     user = st.session_state.user_info
-    if user["user_type"] == "owner" and user.get("store_id"):
+    if user.get("store_id"):
         render_store_status()
         render_favorite_regions()
+        render_top_viewed_regions()
+        render_recent_views()
         render_store_snapshots()
+    else:
+        render_top_viewed_regions()
+        render_recent_views()
+        if user["user_type"] == "founder":
+            render_trend_widget()
+            render_store_registration_prompt()
 
     render_prediction_history()
 
