@@ -52,6 +52,8 @@ import base64
 from shared import auth
 from shared import components as ui
 from shared.db import get_engine
+# 프로덕션 모델 조회는 실행 PC의 로컬 .env가 연결한 TiDB를 기준으로 한다.
+from shared.query_predictions import get_prediction_for_store
 from shared.write_dong_view import increment_dong_view
 from shared.write_user_view import increment_user_view
 
@@ -472,22 +474,8 @@ def _dong_top_industries(dong_code: str, top_n: int = 3) -> list[dict]:
     return [{"industry_name": r["industry_name"], "n": float(r["n"])} for r in rows]
 
 def _latest_owner_prediction(store_id: str) -> dict | None:
-    """predictions 캐시 조회만 한다 (ui-logic.md 3번). 캐시가 없을 때 그 자리에서
-    모델을 호출해 새로 INSERT하는 부분은 모델이 아직 앱에 연동되지 않아 비워둠 —
-    TODO: 모델 로딩 + app/shared/write_prediction.log_prediction 호출 추가."""
-    engine = get_engine()
-    if engine is None:
-        return None
-    sql = text(
-        """
-        SELECT score, shap_top_features FROM predictions
-        WHERE query_type = 'existing_store' AND store_id = :store_id
-        ORDER BY created_at DESC LIMIT 1
-        """
-    )
-    with engine.connect() as conn:
-        row = conn.execute(sql, {"store_id": store_id}).mappings().first()
-    return dict(row) if row else None
+    """현재 TiDB의 프로덕션 모델 기준으로 기존 점주의 최신 예측값을 조회한다."""
+    return get_prediction_for_store(store_id)
 
 
 def _nearest_dong(lat: float, lng: float) -> str | None:
