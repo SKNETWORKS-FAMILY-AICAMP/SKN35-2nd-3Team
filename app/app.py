@@ -497,6 +497,19 @@ def _nearest_dong(lat: float, lng: float) -> str | None:
     return best
 
 
+def _selected_dong_code(clicked: dict | None) -> str | None:
+    """선택 상태에 확정된 동 코드가 있으면 우선 사용하고 구버전 상태만 근사한다."""
+    if not clicked:
+        return None
+    dong_code = clicked.get("dong_code")
+    if dong_code:
+        return str(dong_code)
+    try:
+        return _nearest_dong(float(clicked["lat"]), float(clicked["lng"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------
 # 지도 — 동 경계 색칠 (Voronoi 기반)
 #
@@ -681,6 +694,67 @@ def _point_in_geojson_geometry(lng: float, lat: float, geometry: dict) -> bool:
     return False
 
 
+def _geojson_label_position(geometry: dict) -> tuple[float, float] | None:
+    """GeoJSON 면 내부에 영구 라벨을 놓을 대표 좌표를 반환한다.
+
+    DB의 매장 평균 좌표는 실제 행정동 면 밖으로 벗어날 수 있으므로 라벨 위치에는
+    사용하지 않는다. 가장 큰 외곽 링의 면적 중심을 우선 사용하고, 오목한 면이라
+    중심이 밖에 놓이는 경우에는 내부 격자점 중 중심에 가장 가까운 점을 고른다.
+    """
+    coordinates = geometry.get("coordinates", [])
+    if geometry.get("type") == "Polygon":
+        polygons = [coordinates]
+    elif geometry.get("type") == "MultiPolygon":
+        polygons = coordinates
+    else:
+        return None
+
+    outer_rings = [polygon[0] for polygon in polygons if polygon and polygon[0]]
+    if not outer_rings:
+        return None
+
+    def signed_area(ring: list[list[float]]) -> float:
+        return sum(
+            start[0] * end[1] - end[0] * start[1]
+            for start, end in zip(ring, ring[1:] + ring[:1])
+        ) / 2
+
+    ring = max(outer_rings, key=lambda item: abs(signed_area(item)))
+    area = signed_area(ring)
+    if abs(area) > 1e-12:
+        centroid_lng = sum(
+            (start[0] + end[0])
+            * (start[0] * end[1] - end[0] * start[1])
+            for start, end in zip(ring, ring[1:] + ring[:1])
+        ) / (6 * area)
+        centroid_lat = sum(
+            (start[1] + end[1])
+            * (start[0] * end[1] - end[0] * start[1])
+            for start, end in zip(ring, ring[1:] + ring[:1])
+        ) / (6 * area)
+        if _point_in_geojson_geometry(centroid_lng, centroid_lat, geometry):
+            return centroid_lat, centroid_lng
+
+    lngs = [point[0] for point in ring]
+    lats = [point[1] for point in ring]
+    lng_min, lng_max = min(lngs), max(lngs)
+    lat_min, lat_max = min(lats), max(lats)
+    center_lng = (lng_min + lng_max) / 2
+    center_lat = (lat_min + lat_max) / 2
+    candidates = []
+    for row in range(1, 12):
+        lat = lat_min + (lat_max - lat_min) * row / 12
+        for column in range(1, 12):
+            lng = lng_min + (lng_max - lng_min) * column / 12
+            if _point_in_geojson_geometry(lng, lat, geometry):
+                distance = (lat - center_lat) ** 2 + (lng - center_lng) ** 2
+                candidates.append((distance, lat, lng))
+    if candidates:
+        _, lat, lng = min(candidates)
+        return lat, lng
+    return float(ring[0][1]), float(ring[0][0])
+
+
 def _dong_boundary_cells(points: list[dict]) -> list[tuple[list[tuple[float, float]], dict]]:
     """동 중심점들로 보로노이 다각형을 만들어 [(위경도 좌표 리스트, 원본 point), ...]
     로 반환. 점이 4개 미만이면(보로노이가 성립 안 함) 빈 리스트."""
@@ -744,6 +818,124 @@ def _seoul_dong_geojson() -> dict | None:
             return json.load(response)
     except (OSError, ValueError):
         return None
+
+
+def _normalize_dong_name(name: str) -> str:
+    return name.replace("·", ".").replace(" ", "")
+
+
+def _map_click_dong_code(
+    lat: float,
+    lng: float,
+    current_click: dict | None,
+) -> str | None:
+    """화면에 그린 행정구역 면과 동일한 기준으로 지도 클릭을 동 코드에 연결한다.
+
+    최초 자치구 지도에서는 실제 구 경계 안의 동만 후보로 제한한다. 행정동 지도에
+    들어온 뒤에는 클릭을 포함하는 GeoJSON 동 면을 먼저 찾고 이름이 같은 DB 동을
+    선택한다. GeoJSON을 불러오지 못한 경우에만 기존 최근접 중심점 방식으로 폴백한다.
+    """
+    points = _dong_survival_proxy()
+    names = _dong_name_map()
+    if not points or not names:
+        return _nearest_dong(lat, lng)
+
+    def district_points(district: str) -> list[dict]:
+        prefix = f"{district} "
+        return [
+            point
+            for point in points
+            if names.get(point["dong_code"], "").startswith(prefix)
+        ]
+
+    current_code = _selected_dong_code(current_click)
+    current_name = names.get(current_code, "") if current_code else ""
+    current_district = current_name.split(maxsplit=1)[0] if current_name else None
+
+    district_geojson = _seoul_district_geojson()
+    dong_geojson = _seoul_dong_geojson() if current_district else None
+    district_code_by_name = {
+        feature.get("properties", {}).get("name"): str(
+            feature.get("properties", {}).get("code", "")
+        )
+        for feature in (district_geojson or {}).get("features", [])
+    }
+
+    if current_district and dong_geojson:
+        district_code = district_code_by_name.get(current_district)
+        containing_feature = next(
+            (
+                feature
+                for feature in dong_geojson.get("features", [])
+                if district_code
+                and str(feature.get("properties", {}).get("code", "")).startswith(
+                    district_code
+                )
+                and _point_in_geojson_geometry(
+                    lng, lat, feature.get("geometry", {})
+                )
+            ),
+            None,
+        )
+        # 표시된 동 경계 밖을 클릭했을 때 엉뚱한 인접 동을 선택하지 않는다.
+        if not containing_feature:
+            return None
+
+        feature_name = str(containing_feature.get("properties", {}).get("name", ""))
+        normalized_feature = _normalize_dong_name(feature_name)
+        candidates = district_points(current_district)
+        exact_matches = [
+            point
+            for point in candidates
+            if _normalize_dong_name(
+                names.get(point["dong_code"], "").split(maxsplit=1)[-1]
+            )
+            == normalized_feature
+        ]
+        if exact_matches:
+            return min(
+                exact_matches,
+                key=lambda point: (point["lat"] - lat) ** 2
+                + (point["lng"] - lng) ** 2,
+            )["dong_code"]
+
+        contained_points = [
+            point
+            for point in candidates
+            if _point_in_geojson_geometry(
+                point["lng"], point["lat"], containing_feature.get("geometry", {})
+            )
+        ]
+        if contained_points:
+            return min(
+                contained_points,
+                key=lambda point: (point["lat"] - lat) ** 2
+                + (point["lng"] - lng) ** 2,
+            )["dong_code"]
+        return None
+
+    if district_geojson:
+        containing_district = next(
+            (
+                feature.get("properties", {}).get("name")
+                for feature in district_geojson.get("features", [])
+                if _point_in_geojson_geometry(lng, lat, feature.get("geometry", {}))
+            ),
+            None,
+        )
+        if not containing_district:
+            return None
+        candidates = district_points(containing_district)
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda point: (point["lat"] - lat) ** 2
+            + (point["lng"] - lng) ** 2,
+        )["dong_code"]
+
+    # 네트워크 문제로 화면도 근사 지도를 쓴 경우에는 기존 판정 기준을 유지한다.
+    return _nearest_dong(lat, lng)
 
 
 def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
@@ -873,7 +1065,7 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
 
     points = _dong_survival_proxy()
     names = _dong_name_map()
-    selected_dong = _nearest_dong(clicked["lat"], clicked["lng"]) if clicked else None
+    selected_dong = _selected_dong_code(clicked)
     selected_name = names.get(selected_dong, "") if selected_dong else ""
     selected_district = selected_name.split()[0] if selected_name else None
 
@@ -953,18 +1145,17 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
             )
         ]
         normalized_feature_names = {
-            str(feature.get("properties", {}).get("name", ""))
-            .replace("·", ".")
-            .replace(" ", ""): feature.get("properties", {}).get("name")
+            _normalize_dong_name(
+                str(feature.get("properties", {}).get("name", ""))
+            ): feature.get("properties", {}).get("name")
             for feature in district_dong_features
         }
         feature_points: dict[str, list[tuple[str, dict]]] = {
             feature.get("properties", {}).get("name"): []
             for feature in district_dong_features
         }
-        visible_dong_names = set()
         for dong_name, point in point_by_dong_name.items():
-            normalized_name = dong_name.replace("·", ".").replace(" ", "")
+            normalized_name = _normalize_dong_name(dong_name)
             feature_name = normalized_feature_names.get(normalized_name)
             if not feature_name:
                 feature_name = next(
@@ -979,7 +1170,6 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
                 )
             if feature_name:
                 feature_points[feature_name].append((dong_name, point))
-                visible_dong_names.add(dong_name)
 
         display_features = []
         for feature in district_dong_features:
@@ -1173,12 +1363,17 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
     # 별도 HTML 레이어를 추가하지 않고 Folium 영구 툴팁으로 단계에 맞는 지역명을
     # 표시한다. 동 단계에서는 DB에 좌표가 있는 행정동만 라벨을 올려 겹침을 줄인다.
     if showing_dong_map:
-        for dong_name, point in point_by_dong_name.items():
-            if dong_name not in visible_dong_names:
+        for feature in display_features:
+            properties = feature.get("properties", {})
+            dong_name = str(properties.get("name", ""))
+            if not feature_points.get(dong_name):
                 continue
-            is_selected = dong_name == selected_dong_name
+            label_position = _geojson_label_position(feature.get("geometry", {}))
+            if not label_position:
+                continue
+            is_selected = bool(properties.get("selected"))
             folium.CircleMarker(
-                [point["lat"], point["lng"]],
+                label_position,
                 radius=1,
                 color="transparent",
                 weight=0,
@@ -1219,7 +1414,7 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
             ).add_to(m)
 
     # 초기에는 서울 전체 자치구, 선택 후에는 해당 구의 행정동 경계에 맞춰 확대한다.
-    # 클릭 좌표 판정과 조회 카운팅은 기존 흐름을 그대로 유지한다.
+    # 클릭 판정도 같은 GeoJSON 면 기준으로 맞추고 조회 카운팅 흐름은 유지한다.
     map_height = 620  # points가 없을 때(DB 미연결 등) 대비 기본값
     if points:
         if geojson_bounds:
@@ -1299,7 +1494,14 @@ def _select_search_region(codes: list, points: dict) -> None:
         st.session_state["region_click"] = {
             "lat": float(point["lat"]),
             "lng": float(point["lng"]),
+            "dong_code": str(codes[selected_index]),
         }
+        # 검색 직전 지도에 남아 있던 last_clicked가 다음 줌 이벤트에서 검색 결과를
+        # 덮어쓰지 않도록 이미 처리한 클릭으로 기록한다.
+        map_state = st.session_state.get("main_map") or {}
+        st.session_state["map_last_click"] = _map_click_signature(
+            map_state.get("last_clicked")
+        )
 
 
 def _render_dong_search_box():
@@ -1336,6 +1538,15 @@ def _reset_region_selection() -> None:
     st.session_state["dong_search_select"] = None
 
 
+def _map_click_signature(clicked: dict | None) -> tuple[float, float] | None:
+    if not isinstance(clicked, dict):
+        return None
+    try:
+        return float(clicked["lat"]), float(clicked["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _sync_map_interaction() -> None:
     """Folium 이벤트를 리런 전에 세션 상태와 동기화한다.
 
@@ -1358,25 +1569,26 @@ def _sync_map_interaction() -> None:
         return
 
     last_clicked = map_state.get("last_clicked")
-    if not isinstance(last_clicked, dict):
+    click_signature = _map_click_signature(last_clicked)
+    if not click_signature:
         return
-    try:
-        new_click = {
-            "lat": float(last_clicked["lat"]),
-            "lng": float(last_clicked["lng"]),
-        }
-    except (KeyError, TypeError, ValueError):
+    if click_signature == st.session_state.get("map_last_click"):
         return
-    if current_click == new_click:
+    st.session_state["map_last_click"] = click_signature
+
+    lat, lng = click_signature
+    clicked_dong = _map_click_dong_code(lat, lng, current_click)
+    if not clicked_dong:
+        return
+    if clicked_dong == _selected_dong_code(current_click):
         return
 
+    new_click = {"lat": lat, "lng": lng, "dong_code": str(clicked_dong)}
     st.session_state["region_click"] = new_click
     st.session_state["dong_search_select"] = None
-    clicked_dong = _nearest_dong(new_click["lat"], new_click["lng"])
-    if clicked_dong:
-        user = auth.current_user()
-        increment_dong_view(clicked_dong, user["user_type"] if user else None)
-        increment_user_view(user["user_id"] if user else None, clicked_dong)
+    user = auth.current_user()
+    increment_dong_view(clicked_dong, user["user_type"] if user else None)
+    increment_user_view(user["user_id"] if user else None, clicked_dong)
 
 
 def _render_hot_dong_panel():
@@ -1571,7 +1783,7 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
 
 
 def _render_region_detail_panel(clicked: dict):
-    dong_code = _nearest_dong(clicked["lat"], clicked["lng"])
+    dong_code = _selected_dong_code(clicked)
     if dong_code is None:
         st.caption("해당 위치의 동을 찾지 못했어요.")
         return
@@ -1581,8 +1793,8 @@ def _render_region_detail_panel(clicked: dict):
     st.subheader(names.get(dong_code, dong_code))
 
     # 지도 호버 툴팁에 있던 "우수 · 생존율 xx%" 등급 표시를 여기로 옮김(사용자
-    # 요청, 2026-08-27 — 위 _build_map 주석 참고). _nearest_dong과 같은 A-1
-    # 최근접 중심점 기준 데이터(_dong_survival_proxy)에서 이 동의 값을 찾는다.
+    # 요청, 2026-08-27 — 위 _build_map 주석 참고). 지도에서 확정한 dong_code로
+    # 기존 동별 데이터(_dong_survival_proxy)에서 이 동의 값을 찾는다.
     match = next((p for p in _dong_survival_proxy() if p["dong_code"] == dong_code), None)
     score = None
     rank = None
@@ -1936,6 +2148,7 @@ def main():
     user = auth.current_user()
     owner_snapshot = _owner_latest_snapshot(user["store_id"]) if mode == "OWNER" else None
     st.session_state.setdefault("region_click", None)
+    st.session_state.setdefault("map_last_click", None)
 
     _render_top_header(mode, user, owner_snapshot, show_search=mode in ("GUEST", "NEW_MEMBER"))
 
