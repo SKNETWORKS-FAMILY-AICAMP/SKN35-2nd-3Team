@@ -4,7 +4,7 @@ import os
 
 import google.generativeai as genai
 
-_MODEL_NAME = "gemini-1.5-flash"  # 무료 티어
+_MODEL_NAME = "gemini-flash-latest"  # 무료 티어
 
 
 def _get_model():

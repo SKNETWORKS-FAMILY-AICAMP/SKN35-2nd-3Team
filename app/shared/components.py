@@ -101,9 +101,20 @@ def score_card(title: str, survival_score: float, percentile: float | None = Non
 
 def login_cta_banner() -> None:
     """GUEST 우측 패널 상단 로그인 유도 배너."""
-    st.info("로그인하면 내 가게 맞춤 건강검진과 업종전환 추천을 볼 수 있어요.")
+    with st.container(border=True, key="login_cta"):
+        st.markdown("#### 로그인하고 내 가게 맞춤 분석을 확인해보세요")
+        st.caption("가게 건강검진과 업종전환 추천을 한 번에 확인할 수 있어요.")
+        st.page_link(
+            "pages/login.py",
+            label="내 가게 분석",
+            icon=":material/arrow_forward:",
+            icon_position="right",
+            width="content",
+        )
 
 
 def onboarding_banner() -> None:
     """NEW_MEMBER 우측 패널 상단 온보딩 배너."""
-    st.info("가게를 등록하면 내 가게 기준 맞춤 분석을 받을 수 있어요.")
+    with st.container(border=True, key="onboarding_cta"):
+        st.markdown("#### 관심 지역과 업종부터 살펴보세요")
+        st.caption("가게를 등록하면 내 가게 기준 맞춤 분석까지 이어서 받을 수 있어요.")
