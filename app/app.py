@@ -128,6 +128,21 @@ def _industry_name_map() -> dict:
     return {r["industry_code"]: r["industry_name"] for r in rows}
 
 @st.cache_data(ttl=3600)
+def _industry_custom_group_map() -> dict:
+    """industry_code -> custom_group. 챗봇이 모델링 제외 업종(과학·기술/부동산/
+    시설관리·임대)을 언급받았을 때 구분해서 안내하기 위해 사용
+    (_lookup_chatbot_context_from_message에서 사용, 2026-08-30 추가)."""
+    engine = get_engine()
+    if engine is None:
+        return {}
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT industry_code, custom_group FROM industries")
+        ).mappings().all()
+    return {r["industry_code"]: r["custom_group"] for r in rows}
+
+
+@st.cache_data(ttl=3600)
 def _industry_options() -> list[tuple[str, str]]:
     """예비창업자 패널의 업종 선택 드롭다운용. 모델링 제외 업종군(3-2 문서:
     과학·기술/부동산/시설관리·임대)은 후보에서 제외."""
@@ -1457,12 +1472,173 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
 _RANK_BADGES = ("🥇", "🥈", "🥉")   
 
 
+_INDUSTRY_ALIASES: dict[str, list[str]] = {
+    # 사용자가 흔히 쓰는 구어체 업종명이 DB의 정확한 세분류 업종명과 다른 경우가
+    # 많아서(예: "고깃집"이라고 물어도 DB엔 "소고기 구이/찜"/"돼지고기 구이/찜"/
+    # "닭·오리고기 구이/찜"/"곱창 전골/구이"로 나뉘어 있어 정확히 일치하는 이름이
+    # 없음), 자주 나올 법한 별칭 몇 개만 연결해둔다. 완전한 사전은 아니라서
+    # 실사용 중 놓치는 표현이 나오면 여기에 추가하면 된다(2026-08-30 첫 도입).
+    "고깃집": ["소고기 구이/찜", "돼지고기 구이/찜", "닭/오리고기 구이/찜", "곱창 전골/구이"],
+    "고기집": ["소고기 구이/찜", "돼지고기 구이/찜", "닭/오리고기 구이/찜", "곱창 전골/구이"],
+    "고기 집": ["소고기 구이/찜", "돼지고기 구이/찜", "닭/오리고기 구이/찜", "곱창 전골/구이"],
+    "커피숍": ["카페"],
+    "커피집": ["카페"],
+}
+
+
+@st.cache_data(ttl=3600)
+def _top_dongs_for_industries(industry_codes: tuple[str, ...], top_n: int = 3) -> list[dict]:
+    """여러 업종 코드(고깃집처럼 별칭 하나가 세부 업종 여러 개를 가리킬 때)를
+    합쳐서, 동별로 가장 좋은 wilson_score만 남기고 상위 top_n개를 반환한다.
+    업종 코드가 하나뿐이어도 그대로 동작(_top_dongs_for_industry와 동일 결과)."""
+    best_by_dong: dict[str, dict] = {}
+    for code in industry_codes:
+        for d in _top_dongs_for_industry(code, top_n=10):
+            existing = best_by_dong.get(d["dong_code"])
+            if existing is None or d["wilson_score"] > existing["wilson_score"]:
+                best_by_dong[d["dong_code"]] = d
+    ranked = sorted(best_by_dong.values(), key=lambda d: d["wilson_score"], reverse=True)
+    return ranked[:top_n]
+
+
+def _lookup_chatbot_context_from_message(message: str) -> dict | None:
+    """사용자가 챗봇에 직접 언급한 동/구/업종 이름을 DB에서 찾아 실제 데이터를
+    채운다 (2026-08-30, "화면에 띄운 것만 아는 반쪽짜리" 지적 반영 — 화면
+    컨텍스트가 없어도 메시지에 지역명/업종명이 있으면 그 자리에서 조회). 업종은
+    문자열에 이름이 포함되는지만 느슨하게 검사(+ 구어체 별칭 몇 개 보강).
+
+    _dong_name_map()/_industry_name_map()이 각각 administrative_dongs(436개)/
+    industries(247개) 테이블 전체를 조회하므로, 이 함수도 자동으로 전체 동·전체
+    업종(모델링 제외 3개 업종군 포함)을 매칭 대상으로 한다 — 별도 화이트리스트나
+    부분 목록을 유지할 필요 없음.
+
+    2026-08-30 수정: 원래는 동/구가 먼저 안 잡히면 업종을 아예 확인하지도 않고
+    None을 반환해서, "고깃집 어디에 차릴까"처럼 지역 언급 없이 업종만 물어보는
+    (지금 이 서비스의 예비창업자 핵심 시나리오) 질문에 챗봇이 답을 못 하는
+    문제가 있었다. 동 매칭과 업종 매칭을 서로 독립적으로 시도하도록 바꿨다."""
+    names = _dong_name_map()
+    industry_names = _industry_name_map()
+    custom_groups = _industry_custom_group_map()
+
+    # --- 동/구 매칭 (기존 로직 그대로) ---
+    matched_dong_code = None
+    matched_dong_name = None
+    if names:
+        sorted_names = sorted(names.items(), key=lambda kv: -len(kv[1]))
+        for code, full_name in sorted_names:
+            # "서초구 서초동"처럼 "구 동" 형태 전체 또는 "서초동"만 언급해도 매칭.
+            dong_only = full_name.split(maxsplit=1)[-1] if " " in full_name else full_name
+            if full_name in message or dong_only in message:
+                matched_dong_code = code
+                matched_dong_name = full_name
+                break
+
+        if not matched_dong_code:
+            # 동 이름이 없으면 "구" 단위로만이라도 시도 (예: "서초구 카페 어때?").
+            district_candidates = sorted(
+                {n.split()[0] for n in names.values() if " " in n}, key=len, reverse=True
+            )
+            matched_district = next((d for d in district_candidates if d in message), None)
+            if matched_district:
+                # 그 구에서 표본이 가장 많은 동 하나를 대표로 사용.
+                points = _dong_survival_proxy()
+                district_points = [
+                    p for p in points if names.get(p["dong_code"], "").startswith(matched_district)
+                ]
+                if district_points:
+                    best = max(district_points, key=lambda p: p["n"])
+                    matched_dong_code = best["dong_code"]
+                    matched_dong_name = names.get(matched_dong_code, matched_dong_code)
+
+    # --- 업종 매칭 (동/구 매칭 여부와 무관하게 독립적으로 시도) ---
+    matched_industry_codes: list[str] = []
+    matched_industry_label = None
+    if industry_names:
+        # 1) 공식 업종명 직접 매칭(이름 긴 것부터, 기존 로직과 동일).
+        direct_code = next(
+            (
+                code
+                for code, name in sorted(industry_names.items(), key=lambda kv: -len(kv[1]))
+                if name and name in message
+            ),
+            None,
+        )
+        if direct_code:
+            matched_industry_codes = [direct_code]
+            matched_industry_label = industry_names[direct_code]
+        else:
+            # 2) 구어체 별칭으로 재시도.
+            name_to_code = {name: code for code, name in industry_names.items()}
+            for alias, target_names in _INDUSTRY_ALIASES.items():
+                if alias in message:
+                    matched_industry_codes = [
+                        name_to_code[n] for n in target_names if n in name_to_code
+                    ]
+                    matched_industry_label = alias
+                    break
+
+    if not matched_dong_code and not matched_industry_codes:
+        return None
+
+    context: dict = {"화면": "챗봇 직접 질의"}
+
+    if matched_dong_code:
+        match = next((p for p in _dong_survival_proxy() if p["dong_code"] == matched_dong_code), None)
+        pop = _population_feature(matched_dong_code)
+        top_industries = _dong_top_industries(matched_dong_code, top_n=3)
+        context.update(
+            {
+                "동": matched_dong_name,
+                "생존점수": round(match["survival_rate"] * 100) if match else None,
+                "유동인구_평균": pop["total_pop_avg"] if pop else None,
+                "주요업종": [i["industry_name"] for i in top_industries] if top_industries else None,
+            }
+        )
+
+    if matched_industry_codes:
+        context["질문에서_언급된_업종"] = matched_industry_label
+        # 별칭이 세부 업종 여러 개를 가리키는 경우, 그중 하나라도 제외 업종군이면
+        # 안내만 하고 나머지로 계속 진행한다(3-2 문서 반영).
+        non_excluded_codes = [
+            c for c in matched_industry_codes if not ui.is_excluded_industry(custom_groups.get(c))
+        ]
+        excluded_codes = [c for c in matched_industry_codes if c not in non_excluded_codes]
+        if excluded_codes and not non_excluded_codes:
+            context["안내"] = (
+                f"{matched_industry_label}은(는) 이 서비스의 예측 모델 학습 대상 업종이 아니에요 "
+                "(과학·기술/부동산/시설관리·임대 업종군은 제외됨). 참고용 통계만 제공돼요."
+            )
+        elif non_excluded_codes:
+            if matched_dong_code:
+                # 동이 이미 정해져 있으면 "이 업종은 전국에서 어디가 제일 좋은지"만
+                # 참고용으로 하나 더 준다.
+                candidates = _top_dongs_for_industries(tuple(non_excluded_codes), top_n=1)
+                if candidates:
+                    context["해당업종_전국_최고동네"] = candidates[0]["dong_name"]
+            else:
+                # 동을 안 물어봤으면(= "고깃집 어디에 차릴까"류) 이게 핵심 답이라
+                # NEW_MEMBER 패널("관심 업종으로 동네 찾기")과 동일한 방식으로
+                # 상위 3곳을 준다.
+                candidates = _top_dongs_for_industries(tuple(non_excluded_codes), top_n=3)
+                context["해당업종_추천동네_TOP3"] = [
+                    f"{c['dong_name']} (추천점수 {c['wilson_score'] * 100:.0f}점, 표본 {c['n']:.0f}곳"
+                    f"{'·신뢰도 낮음' if c['low_confidence'] else ''})"
+                    for c in candidates
+                ] or None
+
+    return context
+
+
 @st.dialog("💬 상담 챗봇")
 def _render_chatbot_dialog():
     """모달 팝업 챗봇 — 자유 대화가 아니라, 지금 화면에 떠 있는 실제 DB 조회
     결과(동 생존율/유동인구, 또는 내 가게 예측 결과)를 context로 넘겨서 그
     범위 안에서만 답하게 한다(2026-08-28, 환각 방지 목적). context가 없으면
-    (초기 GUEST 화면 등) 일반적인 서비스 안내만 함."""
+    (초기 GUEST 화면 등) 일반적인 서비스 안내만 함.
+
+    2026-08-30 추가: 화면 컨텍스트가 없거나(예: GUEST 첫 화면) 사용자가 화면과
+    다른 지역/업종을 직접 물어보면(예: "서초구 카페 어때?") 메시지에서 그 자리에서
+    DB 조회해서 채운 컨텍스트를 화면 컨텍스트보다 우선한다."""
     if "chatbot_history" not in st.session_state:
         st.session_state["chatbot_history"] = []
 
@@ -1476,11 +1652,28 @@ def _render_chatbot_dialog():
 
     user_input = st.chat_input("궁금한 점을 물어보세요")
     if user_input:
+        # 이번 턴을 history에 추가하기 전에 "이전까지의 대화"를 먼저 떼어둔다
+        # (2026-08-30 추가) — ask_chatbot에 user_message와 history를 따로 넘겨야
+        # 멀티턴 대화가 실제로 이어짐(같은 메시지를 두 번 보내면 안 됨).
+        history_so_far = list(st.session_state["chatbot_history"])
         st.session_state["chatbot_history"].append(("user", user_input))
-        with st.spinner("답변 생성 중..."):
-            answer = ask_chatbot(user_input, context=context)
+        # 위 for 루프가 이미 실행된 뒤라 새 사용자 메시지는 직접 그려줘야 보인다.
+        with st.chat_message("user"):
+            st.write(user_input)
+
+        message_context = _lookup_chatbot_context_from_message(user_input)
+        effective_context = message_context or context
+        with st.chat_message("assistant"):
+            with st.spinner("답변 생성 중..."):
+                answer = ask_chatbot(user_input, context=effective_context, history=history_so_far)
+            st.write(answer)
         st.session_state["chatbot_history"].append(("assistant", answer))
-        st.rerun()
+        # 2026-08-30: st.rerun()을 쓰지 않는다 — st.dialog 안에서 st.rerun()을
+        # 호출하면 모달을 "새로고침"하는 게 아니라 아예 닫아버린다(공식 동작:
+        # "프로그래밍적으로 다이얼로그를 닫으려면 st.rerun()을 호출하라"). 그래서
+        # 답변이 오자마자 화면이 꺼졌다가, 버튼을 다시 눌러 재오픈해야만 이미
+        # 저장된 히스토리에서 답이 보이는 문제가 있었다. rerun 없이 이번 실행
+        # 안에서 바로 그려주면 모달이 안 닫히고 즉시 답이 보인다.
 
 
 _RANK_BADGES = ("🥇", "🥈", "🥉")
@@ -1710,6 +1903,21 @@ def _render_new_member_panel():
                     caption=caption,
                 )
 
+        # 챗봇이 지금 화면에 뜬 추천을 근거로 답할 수 있도록 컨텍스트 저장
+        # (2026-08-30 추가) — 원래 이 화면은 chatbot_context를 아예 안 채우고
+        # 있어서, "이 업종 어디에 차리면 좋을까" 같은 질문에 챗봇이 참고할 데이터가
+        # 전혀 없었다(메시지에 정확한 지역명이 안 나오면 _lookup_chatbot_context_
+        # from_message도 못 채워주는 경우 대비 폴백).
+        st.session_state["chatbot_context"] = {
+            "화면": "예비창업자 - 관심 업종으로 동네 찾기",
+            "선택한_업종": labels[idx],
+            "추천동네_TOP3": [
+                f"{d['dong_name']} (추천점수 {d['wilson_score'] * 100:.0f}점, 표본 {d['n']:.0f}곳"
+                f"{'·신뢰도 낮음' if d['low_confidence'] else ''})"
+                for d in top_dongs
+            ] or None,
+        }
+
     st.divider()
     _render_hot_dong_panel()
 
@@ -1814,11 +2022,29 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
 
     # 챗봇이 내 가게 데이터를 근거로 답할 수 있도록 컨텍스트 저장(2026-08-28 추가).
     # pred가 없으면(모델 미연동) 생존점수는 None으로 둔다.
+    # 2026-08-30 추가: "업종 전환 어때요", "동네 옮기면 어디가 좋을까" 같은 질문에
+    # "참고 데이터에 없어요"로 답하던 문제 — 화면엔 이미 떠 있는 업종전환 추천(recs)과
+    # 동일업종 기준 이전 추천 동네가 컨텍스트에 안 들어가 있어서 생긴 문제였다.
+    # recs는 위에서 이미 조회한 걸 재사용, 이전 추천 동네만 한 번 더 조회(캐시됨).
+    move_candidates = [
+        d for d in _top_dongs_for_industry(snapshot["industry_code"], top_n=5)
+        if d["dong_code"] != snapshot["dong_code"]
+    ][:3]
     st.session_state["chatbot_context"] = {
         "화면": "내가게",
         "업종": current_name,
         "생존점수": ui.proba_to_survival_score(float(pred["score"])) if pred else None,
         "동": names.get(snapshot["dong_code"], snapshot["dong_code"]),
+        "업종전환_추천": [
+            f"{r['industry_name']} (추천점수 {round(r['wilson_score'] * 100)}점, "
+            f"표본 {r['sample_size']}건{'·신뢰도 낮음' if r['low_confidence'] else ''})"
+            for r in recs
+        ] or None,
+        "동일업종_이전_추천동네": [
+            f"{d['dong_name']} (생존율 {d['survival_rate'] * 100:.0f}%, 표본 {d['n']:.0f}곳"
+            f"{'·신뢰도 낮음' if d['low_confidence'] else ''})"
+            for d in move_candidates
+        ] or None,
     }
 
 def _render_region_detail_panel(clicked: dict):
