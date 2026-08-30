@@ -51,6 +51,7 @@ import base64
 
 from shared import auth
 from shared import components as ui
+from shared.llm_client import ask_chatbot
 from shared.db import get_engine
 # 프로덕션 모델 조회는 실행 PC의 로컬 .env가 연결한 TiDB를 기준으로 한다.
 from shared.query_predictions import get_prediction_for_store
@@ -753,6 +754,35 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
 # ---------------------------------------------------------------
 # 우측 패널
 # ---------------------------------------------------------------
+_RANK_BADGES = ("🥇", "🥈", "🥉")   
+
+
+@st.dialog("💬 상담 챗봇")
+def _render_chatbot_dialog():
+    """모달 팝업 챗봇 — 자유 대화가 아니라, 지금 화면에 떠 있는 실제 DB 조회
+    결과(동 생존율/유동인구, 또는 내 가게 예측 결과)를 context로 넘겨서 그
+    범위 안에서만 답하게 한다(2026-08-28, 환각 방지 목적). context가 없으면
+    (초기 GUEST 화면 등) 일반적인 서비스 안내만 함."""
+    if "chatbot_history" not in st.session_state:
+        st.session_state["chatbot_history"] = []
+
+    context = st.session_state.get("chatbot_context")
+    if context:
+        st.caption(f"📍 지금 보고 계신 화면: {context.get('화면', '')} 기준으로 답변해요")
+
+    for role, msg in st.session_state["chatbot_history"]:
+        with st.chat_message(role):
+            st.write(msg)
+
+    user_input = st.chat_input("궁금한 점을 물어보세요")
+    if user_input:
+        st.session_state["chatbot_history"].append(("user", user_input))
+        with st.spinner("답변 생성 중..."):
+            answer = ask_chatbot(user_input, context=context)
+        st.session_state["chatbot_history"].append(("assistant", answer))
+        st.rerun()
+
+
 _RANK_BADGES = ("🥇", "🥈", "🥉")
 
 
@@ -999,6 +1029,14 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
     else:
         st.info("이 업종에 대한 전환 통계가 아직 없어요.")
 
+    # 챗봇이 내 가게 데이터를 근거로 답할 수 있도록 컨텍스트 저장(2026-08-28 추가).
+    # pred가 없으면(모델 미연동) 생존점수는 None으로 둔다.
+    st.session_state["chatbot_context"] = {
+        "화면": "내가게",
+        "업종": current_name,
+        "생존점수": ui.proba_to_survival_score(float(pred["score"])) if pred else None,
+        "동": names.get(snapshot["dong_code"], snapshot["dong_code"]),
+    }
 
 def _render_region_detail_panel(clicked: dict):
     st.subheader("지역 상세")
@@ -1088,6 +1126,16 @@ def _render_region_detail_panel(clicked: dict):
                 if stats and stats["total_pop_avg"] is not None:
                     st.caption(f"유동인구 {stats['total_pop_avg']:.0f}명")
 
+    # 챗봇이 지금 보고 있는 동 데이터를 근거로 답할 수 있도록 컨텍스트 저장
+    # (2026-08-28 추가) — 함수 안에서 이미 조회한 match/pop/top_industries를
+    # 재활용, DB를 더 안 때림.
+    st.session_state["chatbot_context"] = {
+        "화면": "지역상세",
+        "동": names.get(dong_code, dong_code),
+        "생존점수": round(match["survival_rate"] * 100) if match else None,
+        "유동인구_평균": pop["total_pop_avg"] if pop else None,
+        "주요업종": [i["industry_name"] for i in top_industries] if top_industries else None,
+    }
 
 # ---------------------------------------------------------------
 # 레이아웃(사이드바 제거 + 상단 헤더) — 사용자가 첨부한 목업 4장처럼
@@ -1227,6 +1275,11 @@ def main():
                 increment_dong_view(clicked_dong, user["user_type"] if user else None)
                 increment_user_view(user["user_id"] if user else None, clicked_dong)
             st.rerun()
+
+            # 챗봇 진입 버튼(2026-08-28 추가) — 위치는 아직 최종 확정 아님, 우선
+        # 지도 바로 아래에 배치. st.dialog로 모달을 띄운다.
+        if st.button("💬 상담 챗봇", key="open_chatbot"):
+            _render_chatbot_dialog()
 
     with col_panel:
         if mode == "GUEST":
