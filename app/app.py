@@ -25,6 +25,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from urllib.request import urlopen
 
 # Streamlit은 이 파일(app/app.py)이 있는 폴더(app/)를 sys.path 맨 앞에 넣고 실행한다.
 # 그런데 이 폴더 안에 이 파일 자신이 "app.py"라는 이름으로 있다 보니, 파이썬이
@@ -44,7 +45,7 @@ sys.path.insert(0, _APP_DIR)
 import folium
 import numpy as np
 import streamlit as st
-from scipy.spatial import Voronoi
+from scipy.spatial import ConvexHull, Voronoi
 from sqlalchemy import text
 from streamlit_folium import st_folium
 import base64
@@ -57,7 +58,11 @@ from shared.query_predictions import get_prediction_for_store
 from shared.write_dong_view import increment_dong_view
 from shared.write_user_view import increment_user_view
 
-st.set_page_config(page_title="서울 상권 폐업예측", layout="wide")
+st.set_page_config(
+    page_title="서울 상권 폐업예측",
+    page_icon=":material/location_city:",
+    layout="wide",
+)
 
 _MY_PAGE_EXISTS = (Path(__file__).resolve().parent / "pages" / "mypage.py").exists()
 _BRAND_LOGO_PATH = str(Path(__file__).resolve().parent / "assets" / "brand_logo.png")
@@ -599,6 +604,83 @@ def _clip_polygon(subject: list[tuple[float, float]], bbox: tuple[float, float, 
     return output
 
 
+def _clip_polygon_to_convex(
+    subject_latlngs: list[tuple[float, float]],
+    clip_xy: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """위경도 폴리곤을 반시계 방향의 볼록 경계 안으로 자른다."""
+    subject = [(lng, lat) for lat, lng in subject_latlngs]
+
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def intersection(start, end, clip_start, clip_end):
+        direction = (end[0] - start[0], end[1] - start[1])
+        clip_direction = (clip_end[0] - clip_start[0], clip_end[1] - clip_start[1])
+        denominator = (
+            direction[0] * clip_direction[1] - direction[1] * clip_direction[0]
+        )
+        if abs(denominator) < 1e-12:
+            return end
+        offset = (clip_start[0] - start[0], clip_start[1] - start[1])
+        ratio = (
+            offset[0] * clip_direction[1] - offset[1] * clip_direction[0]
+        ) / denominator
+        return (start[0] + ratio * direction[0], start[1] + ratio * direction[1])
+
+    output = subject
+    for clip_start, clip_end in zip(clip_xy, clip_xy[1:] + clip_xy[:1]):
+        if not output:
+            break
+        input_list = output
+        output = []
+        for index, current in enumerate(input_list):
+            previous = input_list[index - 1]
+            current_inside = cross(clip_start, clip_end, current) >= -1e-10
+            previous_inside = cross(clip_start, clip_end, previous) >= -1e-10
+            if current_inside:
+                if not previous_inside:
+                    output.append(intersection(previous, current, clip_start, clip_end))
+                output.append(current)
+            elif previous_inside:
+                output.append(intersection(previous, current, clip_start, clip_end))
+
+    return [(lat, lng) for lng, lat in output]
+
+
+def _point_in_geojson_geometry(lng: float, lat: float, geometry: dict) -> bool:
+    """외부 GIS 의존성 없이 점이 GeoJSON Polygon/MultiPolygon 안인지 판정한다."""
+    def in_ring(ring: list[list[float]]) -> bool:
+        inside = False
+        previous = len(ring) - 1
+        for current, (current_lng, current_lat, *_) in enumerate(ring):
+            previous_lng, previous_lat, *_ = ring[previous]
+            crosses_latitude = (current_lat > lat) != (previous_lat > lat)
+            if crosses_latitude:
+                crossing_lng = (
+                    (previous_lng - current_lng)
+                    * (lat - current_lat)
+                    / (previous_lat - current_lat)
+                    + current_lng
+                )
+                if lng < crossing_lng:
+                    inside = not inside
+            previous = current
+        return inside
+
+    def in_polygon(rings: list[list[list[float]]]) -> bool:
+        return bool(rings) and in_ring(rings[0]) and not any(
+            in_ring(hole) for hole in rings[1:]
+        )
+
+    coordinates = geometry.get("coordinates", [])
+    if geometry.get("type") == "Polygon":
+        return in_polygon(coordinates)
+    if geometry.get("type") == "MultiPolygon":
+        return any(in_polygon(polygon) for polygon in coordinates)
+    return False
+
+
 def _dong_boundary_cells(points: list[dict]) -> list[tuple[list[tuple[float, float]], dict]]:
     """동 중심점들로 보로노이 다각형을 만들어 [(위경도 좌표 리스트, 원본 point), ...]
     로 반환. 점이 4개 미만이면(보로노이가 성립 안 함) 빈 리스트."""
@@ -634,99 +716,510 @@ def _dong_boundary_cells(points: list[dict]) -> list[tuple[list[tuple[float, flo
 # 종횡비에 맞춰 매번 계산한다(2026-08-27, "저거 빠져나오는거 어떻게 잘 못 맞추나,
 # 배치를 다르게 해도 괜찮아" 피드백 반영).
 _MAP_WIDTH = 820
+_SEOUL_DISTRICT_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/southkorea/seoul-maps/master/"
+    "kostat/2013/json/seoul_municipalities_geo_simple.json"
+)
+_SEOUL_DONG_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/southkorea/seoul-maps/master/"
+    "kostat/2013/json/seoul_submunicipalities_geo_simple.json"
+)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _seoul_district_geojson() -> dict | None:
+    """서울 25개 구 단순 경계를 하루 동안 캐시하고, 오프라인이면 None을 반환."""
+    try:
+        with urlopen(_SEOUL_DISTRICT_GEOJSON_URL, timeout=5) as response:
+            return json.load(response)
+    except (OSError, ValueError):
+        return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _seoul_dong_geojson() -> dict | None:
+    """서울 행정동 단순 경계를 하루 동안 캐시하고, 오프라인이면 None을 반환."""
+    try:
+        with urlopen(_SEOUL_DONG_GEOJSON_URL, timeout=5) as response:
+            return json.load(response)
+    except (OSError, ValueError):
+        return None
 
 
 def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
-    # 타일은 다시 일반 OpenStreetMap으로 — cartodbpositron(파스텔 배경) + 꽉 채운
-    # 경계선 색칠을 같이 쓰니 실제 지도가 아니라 "벌집"처럼 보인다는 피드백(2026-08-27:
-    # "벌집이야? 그냥 일반 지도로 하고 나누는선만 예쁘게 해줘"). 그래서 배경은 원래
-    # 익숙한 실제 지도로 되돌리고, 그 위에 경계선만 살짝 얹는 방식으로 바꿈 — 안은
-    # 거의 비워서(fill_opacity를 확 낮춤) 지도 자체(도로/건물/지명)가 그대로 비치고,
-    # 선(테두리)만 위험도 색으로 또렷하게 보이게 함. 흔히 보는 "지도 위에 위험지역
-    # 윤곽만 표시"하는 방식.
-    #
-    # 반환값은 (folium.Map, 지도 높이) 튜플 — 아래에서 계산하는 높이를
-    # main()에서 st_folium(height=...)에 그대로 넘겨준다.
+    # 첨부 시안의 면 지도 표현을 현재 데이터에 적용한다. 최초에는 서울 자치구,
+    # 지역 선택 후에는 해당 구의 실제 행정동 경계를 표시하고 네트워크가 없을 때만
+    # 기존 동 중심점 Voronoi 셀을 근사 지도 폴백으로 사용한다.
+    def styled_map(location: list[float], zoom_start: int) -> folium.Map:
+        map_obj = folium.Map(
+            location=location,
+            zoom_start=zoom_start,
+            tiles=None,
+            prefer_canvas=False,
+            control_scale=False,
+        )
+        folium.TileLayer(
+            tiles="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            attr="&copy; OpenStreetMap contributors",
+            name="밝은 지도",
+            overlay=False,
+            control=False,
+            opacity=0.18,
+        ).add_to(map_obj)
+        map_obj.get_root().html.add_child(
+            folium.Element(
+                """
+                <style>
+                .leaflet-container {
+                    background: #EAF3FF !important;
+                    font-family: Pretendard, "Noto Sans KR", sans-serif;
+                }
+                .leaflet-interactive:focus { outline: none; }
+                .leaflet-control-zoom {
+                    border: 1px solid #D9E4F2 !important;
+                    border-radius: 12px !important;
+                    box-shadow: 0 4px 14px rgba(23, 78, 145, 0.12) !important;
+                    overflow: hidden;
+                }
+                .leaflet-control-zoom a {
+                    color: #174E91 !important;
+                    border-color: #E6EDF6 !important;
+                }
+                .leaflet-tooltip {
+                    background: #303238;
+                    border: 0;
+                    border-radius: 999px;
+                    box-shadow: 0 4px 14px rgba(18, 34, 53, 0.2);
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    padding: 7px 11px;
+                }
+                .leaflet-tooltip::before { display: none; }
+                .leaflet-tooltip.district-label {
+                    background: transparent;
+                    box-shadow: none;
+                    color: #27364A;
+                    font-size: 0.72rem;
+                    font-weight: 800;
+                    padding: 0;
+                    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.95);
+                    white-space: nowrap;
+                }
+                .leaflet-tooltip.dong-label {
+                    background: rgba(255, 255, 255, 0.78);
+                    border: 0;
+                    border-radius: 6px;
+                    box-shadow: none;
+                    color: #34465D;
+                    font-size: 0.64rem;
+                    font-weight: 700;
+                    padding: 2px 4px;
+                    white-space: nowrap;
+                }
+                .leaflet-tooltip.selected-district-label {
+                    background: rgba(35, 38, 43, 0.94);
+                    border-radius: 9px;
+                    box-shadow: 0 5px 16px rgba(20, 30, 45, 0.24);
+                    color: #FFFFFF;
+                    font-size: 0.82rem;
+                    font-weight: 800;
+                    padding: 7px 10px;
+                    white-space: nowrap;
+                }
+                .leaflet-control-attribution {
+                    background: rgba(255, 255, 255, 0.72) !important;
+                    color: #748094;
+                }
+                </style>
+                """
+            )
+        )
+        return map_obj
+
     if mode == "OWNER" and owner_snapshot:
         lat, lng = float(owner_snapshot["lat"]), float(owner_snapshot["lng"])
-        m = folium.Map(location=[lat, lng], zoom_start=16, tiles="OpenStreetMap")
+        m = styled_map([lat, lng], zoom_start=16)
+        folium.CircleMarker(
+            [lat, lng],
+            radius=29,
+            color="#F36A2E",
+            weight=6,
+            opacity=1,
+            fill=True,
+            fill_color="#174E91",
+            fill_opacity=0.96,
+            tooltip=owner_snapshot.get("store_name") or "내 가게",
+        ).add_to(m)
         folium.Marker(
             [lat, lng],
             tooltip=owner_snapshot.get("store_name") or "내 가게",
-            icon=folium.Icon(color="blue", icon="home"),
+            icon=folium.Icon(color="orange", icon="home"),
         ).add_to(m)
         return m, 620  # 한 지점 확대라 종횡비 문제가 없어서 기존 고정 높이 유지
 
-    m = folium.Map(location=[37.5665, 126.9780], zoom_start=11, tiles="OpenStreetMap")
-
-    # 클릭했을 때 실제 셀 모양이 아니라 네모난 점선 상자가 뜨는 문제(2026-08-27,
-    # 사용자 지적: "저걸 누르면 저 격자 부분이 눌려야지 왜 저렇게 된거야") — 브라우저가
-    # 클릭된 SVG 도형에 기본으로 씌우는 포커스 사각형(도형 모양을 무시하고 항상
-    # 네모)이 원인. 그 기본 사각형은 꺼버리고, 선택된 셀 자체를 우리가 직접 진하게
-    # 칠해서(아래 SELECTED_COLOR) 그게 "눌린 상태" 표시가 되도록 함.
-    m.get_root().html.add_child(folium.Element(
-        "<style>.leaflet-interactive:focus{outline:none;}</style>"
-    ))
+    m = styled_map([37.5665, 126.9780], zoom_start=11)
 
     points = _dong_survival_proxy()
-    # 호버 툴팁에 있던 "우수 · 생존율 xx%" 표시는 지역상세 패널로 옮기고, 지도
-    # 위 툴팁은 구+동 이름만 보여주기로 함(사용자 요청, 2026-08-27: "마우스
-    # 올려놨을때 우수 생존율 이거는 저 사진에다 하는게 좋을거 같고, 그냥 구랑
-    # 동이름 노출되게끔"). 등급/생존율은 클릭 후 _render_region_detail_panel에서 표시.
     names = _dong_name_map()
-
-    # A-1과 동일한 최근접 중심점 기준으로, 지금 선택돼 있는 동을 구해서 그 셀만
-    # 다르게 칠한다. `clicked`는 st.session_state["region_click"]에서 오는데, 이
-    # 값은 새로 클릭하기 전까지 리런이 몇 번 되든 그대로 남아있어서(사용자 요청:
-    # "포커스가 안 풀리게") 선택 표시가 저절로 유지된다 — 브라우저 자체 포커스처럼
-    # 지도가 다시 그려지면 없어지는 방식이 아니라, 매번 이 값 기준으로 다시 칠하는
-    # 방식이라 리런에 안전함.
     selected_dong = _nearest_dong(clicked["lat"], clicked["lng"]) if clicked else None
+    selected_name = names.get(selected_dong, "") if selected_dong else ""
+    selected_district = selected_name.split()[0] if selected_name else None
 
-    DEFAULT_COLOR = "#7fc7e8"   # 연한 하늘색
-    SELECTED_COLOR = "#1976a8"  # 눌렀을 때 살짝 진한 하늘색
-    selected_latlngs = None     # 선택된 셀 좌표 — 아래서 그 영역으로 확대할 때 씀
-    for latlngs, p in _dong_boundary_cells(points):
-        is_selected = selected_dong is not None and p["dong_code"] == selected_dong
-        color = SELECTED_COLOR if is_selected else DEFAULT_COLOR
-        folium.Polygon(
-            locations=latlngs,
-            color=color,
-            weight=2.5 if is_selected else 1.2,
-            # 평소(선택 안 됐을 때)엔 구분선이 거의 안 보인다는 피드백(2026-08-27:
-            # "안 눌렀을 때 구분선 잘 안 보여서 살짝만 보이게") — 0.45 → 0.65로 조금
-            # 더 뚜렷하게. 그래도 선택된 셀보단 확실히 옅게(0.9) 남겨서 "살짝만".
-            opacity=0.9 if is_selected else 0.65,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.28 if is_selected else 0.08,
-            smooth_factor=2,
-            line_cap="round",
-            line_join="round",
-            tooltip=names.get(p["dong_code"], p["dong_code"]),
+    def district_name(point: dict) -> str:
+        full_name = names.get(point["dong_code"], point["dong_code"])
+        first_part = full_name.split()[0]
+        return first_part if first_part.endswith("구") else "기타"
+
+    # 구별 생존율은 기존 동별 생존율을 표본 수로 가중 평균한다. 화면의 진한 파란색은
+    # 상대적으로 높은 폐업위험을 뜻하며, 데이터 계산식 자체는 바꾸지 않는다.
+    district_stats: dict[str, dict[str, float]] = {}
+    for point in points:
+        district = district_name(point)
+        stats = district_stats.setdefault(
+            district,
+            {"weighted_survival": 0.0, "samples": 0.0, "lat": 0.0, "lng": 0.0, "count": 0.0},
+        )
+        samples = max(float(point["n"]), 1.0)
+        stats["weighted_survival"] += point["survival_rate"] * samples
+        stats["samples"] += samples
+        stats["lat"] += point["lat"]
+        stats["lng"] += point["lng"]
+        stats["count"] += 1
+
+    district_risk = {
+        district: 1 - (stats["weighted_survival"] / stats["samples"])
+        for district, stats in district_stats.items()
+        if district != "기타" and stats["samples"]
+    }
+    risk_values = list(district_risk.values())
+    risk_breaks = (
+        np.quantile(risk_values, [0.2, 0.4, 0.6, 0.8]).tolist()
+        if risk_values
+        else []
+    )
+    district_palette = ("#E0EDFF", "#C9DFFF", "#AACCF8", "#83B1EC", "#568FD8")
+    risk_labels = ("매우 낮음", "낮음", "보통", "높음", "매우 높음")
+
+    geojson_bounds = None
+    district_geojson = _seoul_district_geojson()
+    dong_geojson = _seoul_dong_geojson() if selected_district else None
+    selected_dong_name = (
+        selected_name.split(maxsplit=1)[1]
+        if selected_name and len(selected_name.split(maxsplit=1)) == 2
+        else None
+    )
+    district_code_by_name = {
+        feature.get("properties", {}).get("name"): str(
+            feature.get("properties", {}).get("code", "")
+        )
+        for feature in (district_geojson or {}).get("features", [])
+    }
+    selected_district_code = district_code_by_name.get(selected_district)
+    showing_dong_map = bool(
+        selected_district and selected_district_code and dong_geojson
+    )
+    city_hull_xy: list[tuple[float, float]] = []
+    if showing_dong_map:
+        all_dong_risks = [1 - point["survival_rate"] for point in points]
+        dong_risk_breaks = (
+            np.quantile(all_dong_risks, [0.2, 0.4, 0.6, 0.8]).tolist()
+            if all_dong_risks
+            else []
+        )
+        point_by_dong_name = {}
+        for point in points:
+            full_name = names.get(point["dong_code"], point["dong_code"])
+            name_parts = full_name.split(maxsplit=1)
+            if len(name_parts) == 2 and name_parts[0] == selected_district:
+                point_by_dong_name[name_parts[1]] = point
+
+        district_dong_features = [
+            feature
+            for feature in dong_geojson.get("features", [])
+            if str(feature.get("properties", {}).get("code", "")).startswith(
+                selected_district_code
+            )
+        ]
+        normalized_feature_names = {
+            str(feature.get("properties", {}).get("name", ""))
+            .replace("·", ".")
+            .replace(" ", ""): feature.get("properties", {}).get("name")
+            for feature in district_dong_features
+        }
+        feature_points: dict[str, list[tuple[str, dict]]] = {
+            feature.get("properties", {}).get("name"): []
+            for feature in district_dong_features
+        }
+        visible_dong_names = set()
+        for dong_name, point in point_by_dong_name.items():
+            normalized_name = dong_name.replace("·", ".").replace(" ", "")
+            feature_name = normalized_feature_names.get(normalized_name)
+            if not feature_name:
+                feature_name = next(
+                    (
+                        feature.get("properties", {}).get("name")
+                        for feature in district_dong_features
+                        if _point_in_geojson_geometry(
+                            point["lng"], point["lat"], feature.get("geometry", {})
+                        )
+                    ),
+                    None,
+                )
+            if feature_name:
+                feature_points[feature_name].append((dong_name, point))
+                visible_dong_names.add(dong_name)
+
+        display_features = []
+        for feature in district_dong_features:
+            properties = feature.get("properties", {})
+            dong_name = properties.get("name")
+            matched_points = feature_points.get(dong_name, [])
+            matched_samples = sum(
+                max(float(point["n"]), 1.0) for _, point in matched_points
+            )
+            risk = district_risk.get(selected_district, 0.0)
+            if matched_samples:
+                weighted_survival = sum(
+                    point["survival_rate"] * max(float(point["n"]), 1.0)
+                    for _, point in matched_points
+                )
+                risk = 1 - (weighted_survival / matched_samples)
+            level = sum(risk > threshold for threshold in dong_risk_breaks)
+            display_properties = dict(properties)
+            display_properties["fill_color"] = district_palette[level]
+            display_properties["risk_text"] = (
+                f"폐업위험 {risk_labels[level]} · {risk * 100:.0f}%"
+            )
+            display_properties["selected"] = any(
+                matched_name == selected_dong_name
+                for matched_name, _ in matched_points
+            )
+            display_features.append(
+                {
+                    "type": "Feature",
+                    "properties": display_properties,
+                    "geometry": feature.get("geometry"),
+                }
+            )
+
+        dong_layer = folium.GeoJson(
+            {"type": "FeatureCollection", "features": display_features},
+            name=f"{selected_district} 행정동",
+            style_function=lambda feature: {
+                "color": "#F36A2E"
+                if feature["properties"]["selected"]
+                else "#FFFFFF",
+                "weight": 3.8 if feature["properties"]["selected"] else 1.8,
+                "opacity": 1,
+                "fillColor": feature["properties"]["fill_color"],
+                "fillOpacity": 0.8,
+            },
+            highlight_function=lambda feature: {
+                "weight": 3.2,
+                "fillOpacity": 0.92,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=["name", "risk_text"],
+                aliases=["", ""],
+                labels=False,
+                sticky=True,
+            ),
+            smooth_factor=1.2,
+            zoom_on_click=False,
         ).add_to(m)
-        if is_selected:
-            selected_latlngs = latlngs
+        geojson_bounds = dong_layer.get_bounds()
+    elif district_geojson:
+        display_features = []
+        for feature in district_geojson.get("features", []):
+            district = feature.get("properties", {}).get("name")
+            if district not in district_risk:
+                continue
+            risk = district_risk[district]
+            level = sum(risk > threshold for threshold in risk_breaks)
+            properties = dict(feature.get("properties", {}))
+            properties["fill_color"] = district_palette[level]
+            properties["risk_text"] = (
+                f"폐업위험 {risk_labels[level]} · {risk * 100:.0f}%"
+            )
+            properties["selected"] = district == selected_district
+            display_features.append(
+                {
+                    "type": "Feature",
+                    "properties": properties,
+                    "geometry": feature.get("geometry"),
+                }
+            )
 
-    # 클릭하면 그 셀 영역으로 확대(사용자 요청: "이걸 누르면 저 사진처럼 확대되는
-    # 그런건 어렵나"). 셀의 좌표 범위(bounding box)를 구해서 지도가 딱 그 영역만
-    # 보이게 자동으로 이동/확대한다 — 별도 지도 클릭 이벤트 없이, "선택된 셀이
-    # 바뀌면 그 셀에 맞춰 다시 그린다"는 지금 구조 그대로 자연스럽게 들어맞음.
-    #
-    # 선택된 셀이 없을 때(초기 화면)는 고정 zoom_start=11만 쓰면 서울시 범위를 훨씬
-    # 넘어서 고양시/구리시/하남시/성남시/인천 등 서비스와 무관한 지역까지 넓게
-    # 보여서 "이거 안 맞는거 너무 불편하다"는 피드백(2026-08-27, 스크린샷) — 서울
-    # 상권 서비스인데 지도가 서울 범위에 안 맞게 너무 넓게 잡혀있었음. 그래서 동
-    # 중심점(points, 전부 서울 소속) 전체의 좌표 범위로 fit_bounds해서, 처음 화면부터
-    # 서울 영역에 딱 맞게 자동으로 줌/이동되도록 함.
+        district_layer = folium.GeoJson(
+            {"type": "FeatureCollection", "features": display_features},
+            name="서울 자치구",
+            style_function=lambda feature: {
+                "color": "#F36A2E"
+                if feature["properties"]["selected"]
+                else "#FFFFFF",
+                "weight": 3.5 if feature["properties"]["selected"] else 2.2,
+                "opacity": 1,
+                "fillColor": feature["properties"]["fill_color"],
+                "fillOpacity": 0.78,
+            },
+            highlight_function=lambda feature: {
+                "weight": 3.5,
+                "fillOpacity": 0.9,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=["name", "risk_text"],
+                aliases=["", ""],
+                labels=False,
+                sticky=True,
+            ),
+            smooth_factor=1.5,
+            zoom_on_click=False,
+        ).add_to(m)
+        geojson_bounds = district_layer.get_bounds()
+    else:
+        # 네트워크가 없으면 현재 DB의 동 중심점으로 만든 근사 구 지도를 사용한다.
+        raw_cells = _dong_boundary_cells(points)
+        if len(points) >= 4:
+            point_xy = np.array([[point["lng"], point["lat"]] for point in points])
+            hull_vertices = point_xy[ConvexHull(point_xy).vertices]
+            hull_center = hull_vertices.mean(axis=0)
+            expanded_hull = hull_center + ((hull_vertices - hull_center) * 1.07)
+            city_hull_xy = [tuple(vertex) for vertex in expanded_hull]
+
+        cells = []
+        for latlngs, point in raw_cells:
+            clipped = (
+                _clip_polygon_to_convex(latlngs, city_hull_xy)
+                if city_hull_xy
+                else latlngs
+            )
+            if len(clipped) >= 3:
+                cells.append((clipped, point))
+        edge_districts: dict[
+            tuple[tuple[float, float], tuple[float, float]], list[str]
+        ] = {}
+
+        for latlngs, point in cells:
+            district = district_name(point)
+            if district not in district_risk:
+                continue
+            risk = district_risk[district]
+            level = sum(risk > threshold for threshold in risk_breaks)
+            folium.Polygon(
+                locations=latlngs,
+                color=district_palette[level],
+                weight=0,
+                opacity=0,
+                fill=True,
+                fill_color=district_palette[level],
+                fill_opacity=0.76,
+                smooth_factor=1.5,
+                tooltip=folium.Tooltip(
+                    f"{district} · 폐업위험 {risk_labels[level]} · {risk * 100:.0f}%"
+                ),
+            ).add_to(m)
+
+            for start, end in zip(latlngs, latlngs[1:] + latlngs[:1]):
+                start_key = (round(start[0], 7), round(start[1], 7))
+                end_key = (round(end[0], 7), round(end[1], 7))
+                edge_key = tuple(sorted((start_key, end_key)))
+                edge_districts.setdefault(edge_key, []).append(district)
+
+        boundary_segments = []
+        selected_segments = []
+        for edge, owners in edge_districts.items():
+            owner_set = set(owners)
+            is_boundary = len(owners) == 1 or len(owner_set) > 1
+            if not is_boundary:
+                continue
+            segment = [list(edge[0]), list(edge[1])]
+            boundary_segments.append(segment)
+            if selected_district and selected_district in owner_set:
+                selected_segments.append(segment)
+
+        if boundary_segments:
+            folium.PolyLine(
+                locations=boundary_segments,
+                color="#FFFFFF",
+                weight=2.4,
+                opacity=0.96,
+                line_cap="round",
+                line_join="round",
+                interactive=False,
+            ).add_to(m)
+        if selected_segments:
+            folium.PolyLine(
+                locations=selected_segments,
+                color="#F36A2E",
+                weight=3.3,
+                opacity=1,
+                line_cap="round",
+                line_join="round",
+                interactive=False,
+            ).add_to(m)
+
+    # 별도 HTML 레이어를 추가하지 않고 Folium 영구 툴팁으로 단계에 맞는 지역명을
+    # 표시한다. 동 단계에서는 DB에 좌표가 있는 행정동만 라벨을 올려 겹침을 줄인다.
+    if showing_dong_map:
+        for dong_name, point in point_by_dong_name.items():
+            if dong_name not in visible_dong_names:
+                continue
+            is_selected = dong_name == selected_dong_name
+            folium.CircleMarker(
+                [point["lat"], point["lng"]],
+                radius=1,
+                color="transparent",
+                weight=0,
+                opacity=0,
+                fill=False,
+                interactive=False,
+                tooltip=folium.Tooltip(
+                    f"{dong_name} · 선택됨" if is_selected else dong_name,
+                    permanent=True,
+                    sticky=False,
+                    direction="top" if is_selected else "center",
+                    class_name=(
+                        "selected-district-label" if is_selected else "dong-label"
+                    ),
+                    offset=(0, -7) if is_selected else (0, 0),
+                ),
+            ).add_to(m)
+    else:
+        for district, stats in district_stats.items():
+            if district == "기타" or not stats["count"]:
+                continue
+            folium.CircleMarker(
+                [stats["lat"] / stats["count"], stats["lng"] / stats["count"]],
+                radius=1,
+                color="transparent",
+                weight=0,
+                opacity=0,
+                fill=False,
+                interactive=False,
+                tooltip=folium.Tooltip(
+                    district,
+                    permanent=True,
+                    sticky=False,
+                    direction="center",
+                    class_name="district-label",
+                    offset=(0, 0),
+                ),
+            ).add_to(m)
+
+    # 초기에는 서울 전체 자치구, 선택 후에는 해당 구의 행정동 경계에 맞춰 확대한다.
+    # 클릭 좌표 판정과 조회 카운팅은 기존 흐름을 그대로 유지한다.
     map_height = 620  # points가 없을 때(DB 미연결 등) 대비 기본값
-    if selected_latlngs:
-        lats = [pt[0] for pt in selected_latlngs]
-        lngs = [pt[1] for pt in selected_latlngs]
-        m.fit_bounds([[min(lats), min(lngs)], [max(lats), max(lngs)]])
-    elif points:
-        lats = [p["lat"] for p in points]
-        lngs = [p["lng"] for p in points]
+    if points:
+        if geojson_bounds:
+            (lat_min, lng_min), (lat_max, lng_max) = geojson_bounds
+            lats = [lat_min, lat_max]
+            lngs = [lng_min, lng_max]
+        elif city_hull_xy:
+            lats = [lat for lng, lat in city_hull_xy]
+            lngs = [lng for lng, lat in city_hull_xy]
+        else:
+            lats = [p["lat"] for p in points]
+            lngs = [p["lng"] for p in points]
         lat_min, lat_max = min(lats), max(lats)
         lng_min, lng_max = min(lngs), max(lngs)
         m.fit_bounds([[lat_min, lng_min], [lat_max, lng_max]])
@@ -753,7 +1246,7 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
 # ---------------------------------------------------------------
 # 우측 패널
 # ---------------------------------------------------------------
-_RANK_BADGES = ("🥇", "🥈", "🥉")
+_RANK_BADGES = ("1", "2", "3")
 
 
 def _rank_card(badge: str, title: str, pill_text: str, caption: str,
@@ -765,7 +1258,9 @@ def _rank_card(badge: str, title: str, pill_text: str, caption: str,
         st.markdown(
             f"""<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                  <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-                   <span style="font-size:1.4rem;line-height:1;">{badge}</span>
+                   <span style="display:inline-flex;align-items:center;justify-content:center;
+                                width:28px;height:28px;border-radius:8px;background:#179B3B;
+                                color:#fff;font-weight:800;font-size:0.88rem;line-height:1;">{badge}</span>
                    <span style="font-weight:700;font-size:1.05rem;">{title}</span>
                  </div>
                  <div style="flex-shrink:0;background:{pill_bg};color:{pill_color};
@@ -797,9 +1292,10 @@ def _render_dong_search_box():
         options=range(len(labels)),
         format_func=lambda i: labels[i],
         index=None,
-        placeholder="🔍 동 이름으로 검색",
+        placeholder="동 이름으로 검색",
         key="dong_search_select",
         label_visibility="collapsed",
+        width=280,
     )
     if idx is not None:
         code = codes[idx]
@@ -810,12 +1306,20 @@ def _render_dong_search_box():
                 st.session_state["region_click"] = new_click
                 st.rerun()
 
+
+def _reset_region_selection() -> None:
+    """전체 지도 복귀 시 검색 선택도 함께 비워 즉시 재진입하는 것을 막는다."""
+    st.session_state["region_click"] = None
+    st.session_state["dong_search_select"] = None
+
+
 def _render_hot_dong_panel():
     """"카드가 밋밋해서 볼품없다"(1차) → 순위 뱃지+알약(2차) → 4/5위 스타일 안맞음
     → 3위까지만+"지금 뜨는 업종" 추가(3차)를 거쳐, 비율만 있고 실제 모수가 없어서
     설득력이 떨어진다는 피드백(2026-08-28)에 따라 구체적 숫자(총 매장수, 서울
     평균 대비)를 캡션에 추가."""
     st.subheader("지금 뜨는 동네")
+    st.caption("최근 3개월 신규 매장과 생존율을 함께 반영한 순위예요.")
     citywide_avg = _citywide_survival_avg()
     ranking = _hot_dong_ranking(top_n=3)
     if not ranking:
@@ -1001,19 +1505,22 @@ def _render_owner_panel(user: dict, snapshot: dict | None):
 
 
 def _render_region_detail_panel(clicked: dict):
-    st.subheader("지역 상세")
     dong_code = _nearest_dong(clicked["lat"], clicked["lng"])
     if dong_code is None:
         st.caption("해당 위치의 동을 찾지 못했어요.")
         return
 
     names = _dong_name_map()
-    st.markdown(f"**{names.get(dong_code, dong_code)}**")
+    st.caption("선택한 지역")
+    st.subheader(names.get(dong_code, dong_code))
 
     # 지도 호버 툴팁에 있던 "우수 · 생존율 xx%" 등급 표시를 여기로 옮김(사용자
     # 요청, 2026-08-27 — 위 _build_map 주석 참고). _nearest_dong과 같은 A-1
     # 최근접 중심점 기준 데이터(_dong_survival_proxy)에서 이 동의 값을 찾는다.
     match = next((p for p in _dong_survival_proxy() if p["dong_code"] == dong_code), None)
+    score = None
+    rank = None
+    total = None
     if match:
         score = round(match["survival_rate"] * 100)
         ui.grade_badge(score)
@@ -1021,13 +1528,31 @@ def _render_region_detail_panel(clicked: dict):
 
         all_dong_scores = [p["survival_rate"] * 100 for p in _dong_survival_proxy()]
         rank, total = _rank_and_total_desc(score, all_dong_scores)
-        if rank is not None:
-            st.caption(f"서울 {total}개 동 중 {rank}위")
 
     # 유동인구 — 평균 한 줄이 아니라 내국인/장기·단기체류 외국인 구성을 나눠서
     # 보여주고(2026-08-28, "너무 아쉽네 살짝 더 잘 보여질 수 있을거 같은데" 피드백),
     # 관광특구 후보 플래그도 같이 노출.
     pop = _population_feature(dong_code)
+
+    if match:
+        average_population = float(pop["total_pop_avg"]) if pop else None
+        population_value = (
+            f"{average_population / 10000:.1f}만"
+            if average_population is not None and average_population >= 10000
+            else f"{average_population:,.0f}명"
+            if average_population is not None
+            else "-"
+        )
+        with st.container(horizontal=True, gap="xsmall"):
+            st.metric("상권 점수", f"{score}점", border=True)
+            st.metric(
+                "서울 순위",
+                f"{rank}위" if rank is not None else "-",
+                help=f"서울 {total}개 동 기준" if total is not None else None,
+                border=True,
+            )
+            st.metric("일평균 유동인구", population_value, border=True)
+
     if pop:
         with st.container(border=True):
             st.markdown("**유동인구**")
@@ -1063,7 +1588,12 @@ def _render_region_detail_panel(clicked: dict):
     col_add, col_clear = st.columns([2, 1])
     with col_add:
         if not already_added and len(compare_list) < 3:
-            if st.button("➕ 비교 목록에 담기", key="add_compare"):
+            if st.button(
+                "비교 목록에 담기",
+                key="add_compare",
+                icon=":material/add:",
+                width="stretch",
+            ):
                 compare_list.append(dong_code)
                 st.rerun()
         elif already_added:
@@ -1071,7 +1601,12 @@ def _render_region_detail_panel(clicked: dict):
         else:
             st.caption("비교는 최대 3곳까지 가능해요.")
     with col_clear:
-        if compare_list and st.button("🗑️ 비우기", key="clear_compare"):
+        if compare_list and st.button(
+            "비우기",
+            key="clear_compare",
+            icon=":material/delete:",
+            width="stretch",
+        ):
             st.session_state["compare_dongs"] = []
             st.rerun()
 
@@ -1107,11 +1642,118 @@ def _inject_layout_css():
         [data-testid="stSidebar"] { display: none; }
         [data-testid="stSidebarCollapseButton"] { display: none; }
         [data-testid="stHeader"] { display: none; }
-        .stApp { background-color: #f5f6f8; }
+        .stApp { background: #F7F8FA; }
         [data-testid="stMainBlockContainer"] {
-            max-width: 1180px;
+            max-width: 1480px;
             margin: 0 auto;
-            padding-top: 1.5rem;
+            padding: 1.25rem 1.5rem 2.5rem;
+        }
+
+        .st-key-top_header {
+            background: #FFFFFF;
+            border: 1px solid #E3E7EC;
+            border-radius: 16px;
+            box-shadow: 0 4px 18px rgba(29, 56, 89, 0.06);
+            padding: 0.9rem 1.15rem;
+            margin-bottom: 1.25rem;
+        }
+        .st-key-brand_block [data-testid="stPageLink-NavLink"] {
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+            color: #15171A;
+            font-size: 1.35rem;
+            font-weight: 800;
+            padding: 0;
+            min-height: auto;
+        }
+        .st-key-brand_block [data-testid="stPageLink-NavLink"] span:first-child {
+            color: #2376D8;
+        }
+        .st-key-brand_block [data-testid="stCaptionContainer"] {
+            color: #7A828C;
+            margin-top: -0.15rem;
+        }
+        .st-key-header_actions [data-testid="stPageLink-NavLink"] {
+            border-radius: 999px;
+            border-color: #2376D8;
+            background: #2376D8;
+            color: #FFFFFF;
+            font-weight: 700;
+            padding-inline: 1rem;
+            min-height: 2.65rem;
+        }
+        .st-key-header_actions button {
+            min-height: 2.65rem;
+            font-weight: 700;
+        }
+        .st-key-header_actions [data-baseweb="select"] > div {
+            border-radius: 999px;
+            background: #FFFFFF;
+            min-height: 2.65rem;
+        }
+
+        .st-key-map_card,
+        .st-key-insight_panel {
+            background: #FFFFFF;
+            border-color: #E0E5EB;
+            border-radius: 18px;
+            box-shadow: 0 6px 22px rgba(29, 56, 89, 0.06);
+            padding: 1.2rem 1.25rem 1.25rem;
+        }
+        .st-key-map_card iframe {
+            border-radius: 14px;
+            border: 1px solid #E0E5EB;
+        }
+        .st-key-map_card [data-testid="stCaptionContainer"] {
+            color: #7A828C;
+        }
+        .st-key-insight_panel [data-testid="stVerticalBlockBorderWrapper"] {
+            border-color: #E3E7EC;
+            border-radius: 14px;
+            box-shadow: 0 2px 8px rgba(29, 56, 89, 0.04);
+        }
+        .st-key-insight_panel h3 {
+            letter-spacing: -0.02em;
+        }
+
+        .st-key-login_cta {
+            background: #174E91;
+            border-color: #174E91;
+            border-radius: 16px;
+            padding: 1rem 1.1rem;
+            margin-top: 0.5rem;
+        }
+        .st-key-login_cta h4,
+        .st-key-login_cta [data-testid="stCaptionContainer"] {
+            color: #FFFFFF;
+        }
+        .st-key-login_cta [data-testid="stCaptionContainer"] {
+            opacity: 0.78;
+        }
+        .st-key-login_cta [data-testid="stPageLink-NavLink"] {
+            width: fit-content;
+            border: 0;
+            border-radius: 999px;
+            background: #FFFFFF;
+            color: #174E91;
+            font-weight: 800;
+            padding-inline: 1rem;
+        }
+        .st-key-onboarding_cta {
+            background: #EAF3FF;
+            border-color: #CFE2FB;
+            border-radius: 16px;
+            padding: 0.85rem 1rem;
+        }
+
+        @media (max-width: 900px) {
+            [data-testid="stMainBlockContainer"] {
+                padding-inline: 0.8rem;
+            }
+            .st-key-top_header {
+                padding: 0.8rem;
+            }
         }
         </style>
         """,
@@ -1135,56 +1777,88 @@ def _brand_logo_base64() -> str | None:
 
 
 def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None, show_search: bool):
-    """헤더를 두 줄로 분리: 상단 얇은 줄 오른쪽에 로그인 상태, 아래 메인 줄에
-    브랜드(왼쪽, 클릭 시 메인 이동)와 동 검색창(오른쪽). 커스텀 CSS 없이 두 줄
-    모두 동일한 컬럼 비율([7, 3])을 써서, 오른쪽 컬럼 안에 넣은 요소가 자연히
-    같은 가로 위치에 정렬되도록 함(2026-08-28, 이전 CSS 시도가 페이지 전체
-    기준으로 flex를 걸어버려 로그인 버튼이 화면 중앙으로 튀는 문제가 있었음 —
-    커스텀 CSS를 걷어내고 컬럼 구조만으로 해결)."""
-    col_top_spacer, col_top_auth = st.columns([9, 1])
-    with col_top_auth:
-        if mode == "GUEST":
-            st.page_link("pages/login.py", label="로그인", icon="➡️")
-        else:
-            label = {"owner": "기존점주", "founder": "예비창업자", "admin": "관리자"}.get(
-                user["user_type"], user["user_type"]
-            )
-            display_name = user["login_id"]
-            if user["user_type"] == "owner" and owner_snapshot and owner_snapshot.get("store_name"):
-                display_name = owner_snapshot["store_name"]
-            st.caption(f"{label} · {display_name}")
-            if st.button("로그아웃", key="top_logout"):
-                auth.logout()
-                st.rerun()
-            if mode == "ADMIN":
-                st.page_link("pages/admin_dashboard.py", label="관리자 대시보드로 이동", icon="➡️")
-            elif mode in ("OWNER", "NEW_MEMBER") and _MY_PAGE_EXISTS:
-                st.page_link("pages/mypage.py", label="마이페이지로 이동", icon="➡️")
+    """시안처럼 브랜드는 왼쪽, 검색과 계정 액션은 오른쪽에 한 줄로 배치한다."""
+    with st.container(key="top_header"):
+        col_brand, col_actions = st.columns([5, 5], gap="large", vertical_alignment="center")
 
-    col_brand, col_search = st.columns([8, 2])
-    with col_brand:
-        logo_b64 = _brand_logo_base64()
-        if logo_b64:
-            st.markdown(
-                f"""
-                <a href="/" target="_self" style="display:inline-block;">
-                    <img src="data:image/png;base64,{logo_b64}" style="height:44px; width:auto;">
-                </a>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                """
-                <a href="/" target="_self" style="text-decoration:none; color:inherit;">
-                    <span style="font-size:1.5rem; font-weight:700;">📍 서울 상권 폐업예측</span>
-                </a>
-                """,
-                unsafe_allow_html=True,
-            )
-    with col_search:
-        if show_search:
-            _render_dong_search_box()
+        with col_brand:
+            with st.container(key="brand_block", gap=None):
+                logo_b64 = _brand_logo_base64()
+                if logo_b64:
+                    st.markdown(
+                        f"""
+                        <a href="/" target="_self" style="display:inline-block;">
+                            <img src="data:image/png;base64,{logo_b64}" style="height:42px; width:auto;">
+                        </a>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.page_link(
+                        "app.py",
+                        label="서울 상권 폐업예측",
+                        icon=":material/location_city:",
+                        width="content",
+                    )
+                st.caption("데이터로 먼저 보는 우리 동네 상권")
+
+        with col_actions:
+            with st.container(
+                key="header_actions",
+                horizontal=True,
+                wrap=True,
+                horizontal_alignment="right",
+                vertical_alignment="center",
+                gap="xsmall",
+            ):
+                if show_search:
+                    _render_dong_search_box()
+
+                if mode == "GUEST":
+                    st.page_link(
+                        "pages/login.py",
+                        label="로그인",
+                        icon=":material/login:",
+                        width="content",
+                    )
+                else:
+                    label = {
+                        "owner": "기존점주",
+                        "founder": "예비창업자",
+                        "admin": "관리자",
+                    }.get(user["user_type"], user["user_type"])
+                    display_name = user["login_id"]
+                    if (
+                        user["user_type"] == "owner"
+                        and owner_snapshot
+                        and owner_snapshot.get("store_name")
+                    ):
+                        display_name = owner_snapshot["store_name"]
+                    st.caption(f"{label} · {display_name}")
+
+                    if mode == "ADMIN":
+                        st.page_link(
+                            "pages/admin_dashboard.py",
+                            label="관리자 대시보드",
+                            icon=":material/dashboard:",
+                            width="content",
+                        )
+                    elif mode in ("OWNER", "NEW_MEMBER") and _MY_PAGE_EXISTS:
+                        st.page_link(
+                            "pages/mypage.py",
+                            label="마이페이지",
+                            icon=":material/person:",
+                            width="content",
+                        )
+
+                    if st.button(
+                        "로그아웃",
+                        key="top_logout",
+                        icon=":material/logout:",
+                        width="content",
+                    ):
+                        auth.logout()
+                        st.rerun()
 
 
 # ---------------------------------------------------------------
@@ -1205,54 +1879,54 @@ def main():
     if "region_click" not in st.session_state:
         st.session_state["region_click"] = None
 
-    col_map, col_panel = st.columns([6, 4])
+    col_map, col_panel = st.columns([65, 35], gap="medium")
 
     with col_map:
-        # width를 None(컬럼 폭에 맞춤)으로 두면 _build_map이 실제 렌더 폭을 몰라서
-        # 높이를 서울 모양에 맞게 계산할 수가 없었음 — 그래서 폭을 _MAP_WIDTH로
-        # 고정하고, 높이는 _build_map이 서울 bbox 종횡비에 맞춰 계산해서 돌려주는
-        # 값을 그대로 씀(2026-08-27, "저거 빠져나오는거" 재피드백 반영 — 위
-        # _build_map 주석 참고).
-        fmap, map_height = _build_map(mode, owner_snapshot, st.session_state["region_click"])
-        map_state = st_folium(fmap, height=map_height, width=_MAP_WIDTH, key="main_map")
-        if mode != "OWNER" and map_state and map_state.get("last_clicked"):
-            st.session_state["region_click"] = map_state["last_clicked"]
-            # 지도 클릭(지역상세 조회) 카운팅 — 두 헬퍼 모두 게스트/필수값 없으면
-            # 조용히 무시하도록 이미 구현돼 있어서(write_dong_view.py/write_user_view.py
-            # 참고), 호출부에서 별도 로그인 체크 없이 그냥 호출하면 됨.
-            clicked_dong = _nearest_dong(
-                map_state["last_clicked"]["lat"], map_state["last_clicked"]["lng"]
-            )
-            if clicked_dong:
-                increment_dong_view(clicked_dong, user["user_type"] if user else None)
-                increment_user_view(user["user_id"] if user else None, clicked_dong)
-            st.rerun()
+        with st.container(border=True, key="map_card"):
+            st.caption("서울시 상권 데이터")
+            st.subheader("내 가게 위치" if mode == "OWNER" else "우리 동네 상권 지도")
+            st.caption("지도에서 관심 지역을 선택하면 오른쪽에서 상세 지표를 확인할 수 있어요.")
+
+            # 지도 계산과 클릭 처리 로직은 그대로 두고 카드 안으로만 옮긴다.
+            fmap, map_height = _build_map(mode, owner_snapshot, st.session_state["region_click"])
+            map_state = st_folium(fmap, height=map_height, width=_MAP_WIDTH, key="main_map")
+        if mode != "OWNER":
+            if st.session_state["region_click"]:
+                st.caption("행정동 단위 보기 · 선택한 동은 주황색으로 표시돼요.")
+            else:
+                st.caption(
+                    "자치구 단위 보기 · 옅을수록 폐업위험이 낮고 진할수록 높아요."
+                )
+            if mode != "OWNER" and map_state and map_state.get("last_clicked"):
+                st.session_state["region_click"] = map_state["last_clicked"]
+                clicked_dong = _nearest_dong(
+                    map_state["last_clicked"]["lat"], map_state["last_clicked"]["lng"]
+                )
+                if clicked_dong:
+                    increment_dong_view(clicked_dong, user["user_type"] if user else None)
+                    increment_user_view(user["user_id"] if user else None, clicked_dong)
+                st.rerun()
 
     with col_panel:
-        if mode == "GUEST":
-            ui.login_cta_banner()
-        elif mode == "NEW_MEMBER":
-            ui.onboarding_banner()
-
-        clicked = st.session_state["region_click"]
-        if mode == "OWNER":
-            _render_owner_panel(user, owner_snapshot)
-        elif clicked:
-            # 목업(지역 선택 화면)의 "< 지도로 돌아가기" 되돌리기 링크(2026-08-28
-            # 첨부 목업 반영). 클릭 상태만 지우면 지도는 그대로 있으니 위쪽
-            # 패널로 자연히 돌아간다.
-            if st.button("← 지도로 돌아가기", key="back_to_map"):
-                st.session_state["region_click"] = None
-                st.rerun()
-            _render_region_detail_panel(clicked)
-
-        elif mode == "NEW_MEMBER":
-            # GUEST와 완전히 동일한 화면이라는 피드백(2026-08-28) — 예비창업자
-            # 전용 "관심 업종으로 동네 찾기" 탐색 기능. 동 검색창은 상단 헤더로
-            # 옮겨졌다(2026-08-28, "저 사진 라인에 마지막에 두면 참 좋을텐데" 요청).
-            _render_new_member_panel()
-        else:
-            _render_hot_dong_panel()
+        with st.container(border=True, key="insight_panel"):
+            clicked = st.session_state["region_click"]
+            if mode == "OWNER":
+                _render_owner_panel(user, owner_snapshot)
+            elif clicked:
+                st.button(
+                    "전체 지도로 돌아가기",
+                    key="back_to_map",
+                    icon=":material/arrow_back:",
+                    type="tertiary",
+                    on_click=_reset_region_selection,
+                )
+                _render_region_detail_panel(clicked)
+            elif mode == "NEW_MEMBER":
+                ui.onboarding_banner()
+                _render_new_member_panel()
+            else:
+                _render_hot_dong_panel()
+                ui.login_cta_banner()
 
 
 if __name__ == "__main__":
