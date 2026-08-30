@@ -15,3 +15,7 @@ pymysql
 python-dotenv
 certifi
 cryptography
+
+# 챗봇 (app/shared/llm_client.py) — 2026-08-30: 구 google-generativeai는
+# 지원 종료 확인돼서 신규 SDK로 교체
+google-genai

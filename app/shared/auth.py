@@ -36,6 +36,14 @@ def _hash_password(raw: str) -> str:
 # ---------------------------------------------------------------
 _SESSION_KEYS = ("user_id", "user_type", "store_id", "login_id")
 
+# 로그인/로그아웃/역할 전환 시 같이 비워야 하는 화면 상태(2026-08-30 추가).
+# chatbot_history/chatbot_context를 안 비우면, 예비창업자로 로그인해서 챗봇과
+# 대화한 뒤 기존점주로 재로그인해도 이전 역할일 때의 대화 기록이 그대로
+# 남아있는 문제가 있었음(사용자 실사용 중 발견) — app.py가 아니라 로그인
+# 함수 쪽에서 지워야 owner/founder/admin 어느 경로로 재로그인해도 빠짐없이
+# 처리된다.
+_CHAT_SESSION_KEYS = ("chatbot_history", "chatbot_context")
+
 
 def is_logged_in() -> bool:
     return st.session_state.get("user_id") is not None
@@ -65,10 +73,19 @@ def _set_session(user_id: str, user_type: str, store_id: str | None, login_id: s
     st.session_state["user_type"] = user_type
     st.session_state["store_id"] = store_id
     st.session_state["login_id"] = login_id
+    _clear_chat_session()
 
 
 def logout() -> None:
     for key in _SESSION_KEYS:
+        st.session_state.pop(key, None)
+    _clear_chat_session()
+
+
+def _clear_chat_session() -> None:
+    """로그인/로그아웃/역할 전환 시 챗봇 대화 기록·컨텍스트를 비운다 — 이전
+    사용자(또는 이전 역할)의 대화가 다음 세션에 남아 보이는 것을 막기 위함."""
+    for key in _CHAT_SESSION_KEYS:
         st.session_state.pop(key, None)
 
 
