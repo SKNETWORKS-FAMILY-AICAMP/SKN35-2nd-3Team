@@ -708,14 +708,14 @@ def _dong_boundary_cells(points: list[dict]) -> list[tuple[list[tuple[float, flo
     return cells
 
 
-# 지도 div의 고정 폭. fit_bounds가 "서울 밖 지역이 빠져나온다"는 피드백을 준 진짜
-# 원인은, 지도 div의 가로세로 비율이 서울의 실제 모양(가로가 세로보다 살짝 더 긴
-# 형태)과 안 맞았던 것 — width=None이면 파이썬 쪽에서 실제 렌더 폭을 알 수 없어서
-# 세로(height)를 서울 모양에 맞게 계산할 방법이 없었다. 그래서 폭은 고정값으로
-# 두고, 세로는 아래 _build_map에서 서울 동 중심점들의 실제 위경도 범위(bbox)
-# 종횡비에 맞춰 매번 계산한다(2026-08-27, "저거 빠져나오는거 어떻게 잘 못 맞추나,
-# 배치를 다르게 해도 괜찮아" 피드백 반영).
-_MAP_WIDTH = 820
+# 반응형 지도 높이를 계산할 때만 쓰는 기준 폭. 실제 렌더 폭은 카드 너비를 따르도록
+# width=None으로 두어 Leaflet 내부 지도와 Streamlit iframe의 폭이 항상 같게 한다.
+# 고정 820px을 st_folium에 넘기면 좁은 카드에서 iframe만 줄어들고 Leaflet은 820px로
+# 남아, 최초 접속 시 구 경계와 영구 라벨 레이어가 서로 어긋날 수 있다.
+_MAP_REFERENCE_WIDTH = 820
+# 행정동 지도를 충분히 축소했을 때 자치구 지도로 돌아가는 기준. 서울 전체
+# fit_bounds가 대체로 zoom 10~11이므로 11 이하를 "전체 보기" 의도로 해석한다.
+_DISTRICT_MAP_RESET_ZOOM = 11
 _SEOUL_DISTRICT_GEOJSON_URL = (
     "https://raw.githubusercontent.com/southkorea/seoul-maps/master/"
     "kostat/2013/json/seoul_municipalities_geo_simple.json"
@@ -799,11 +799,15 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
                     background: transparent;
                     box-shadow: none;
                     color: #27364A;
+                    display: inline-block;
                     font-size: 0.72rem;
                     font-weight: 800;
+                    max-width: none !important;
+                    min-width: 0 !important;
                     padding: 0;
                     text-shadow: 0 1px 2px rgba(255, 255, 255, 0.95);
                     white-space: nowrap;
+                    width: max-content !important;
                 }
                 .leaflet-tooltip.dong-label {
                     background: rgba(255, 255, 255, 0.78);
@@ -811,20 +815,28 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
                     border-radius: 6px;
                     box-shadow: none;
                     color: #34465D;
+                    display: inline-block;
                     font-size: 0.64rem;
                     font-weight: 700;
+                    max-width: none !important;
+                    min-width: 0 !important;
                     padding: 2px 4px;
                     white-space: nowrap;
+                    width: max-content !important;
                 }
                 .leaflet-tooltip.selected-district-label {
                     background: rgba(35, 38, 43, 0.94);
                     border-radius: 9px;
                     box-shadow: 0 5px 16px rgba(20, 30, 45, 0.24);
                     color: #FFFFFF;
+                    display: inline-block;
                     font-size: 0.82rem;
                     font-weight: 800;
+                    max-width: none !important;
+                    min-width: 0 !important;
                     padding: 7px 10px;
                     white-space: nowrap;
+                    width: max-content !important;
                 }
                 .leaflet-control-attribution {
                     background: rgba(255, 255, 255, 0.72) !important;
@@ -1237,7 +1249,7 @@ def _build_map(mode: str, owner_snapshot: dict | None, clicked: dict | None):
         center_lat = sum(lats) / len(lats)
         effective_lng_span = lng_span * math.cos(math.radians(center_lat))
         aspect = effective_lng_span / lat_span  # 가로/세로
-        map_height = int(_MAP_WIDTH / max(aspect, 0.5))
+        map_height = int(_MAP_REFERENCE_WIDTH / max(aspect, 0.5))
         map_height = max(480, min(map_height, 900))  # 극단적으로 길쭉해지는 것 방지
 
     return m, map_height
@@ -1273,6 +1285,23 @@ def _rank_card(badge: str, title: str, pill_text: str, caption: str,
         )
         st.caption(caption)
 
+def _select_search_region(codes: list, points: dict) -> None:
+    """검색 선택을 본문 렌더 전에 반영해 중간 화면을 그리는 추가 리런을 없앤다."""
+    selected_index = st.session_state.get("dong_search_select")
+    if (
+        not isinstance(selected_index, int)
+        or selected_index < 0
+        or selected_index >= len(codes)
+    ):
+        return
+    point = points.get(codes[selected_index])
+    if point:
+        st.session_state["region_click"] = {
+            "lat": float(point["lat"]),
+            "lng": float(point["lng"]),
+        }
+
+
 def _render_dong_search_box():
     """동 이름으로 바로 검색해서 지역상세 패널로 이동하는 검색창(2026-08-28 추가,
     같은 날 헤더 줄로 위치 이동). 상단 헤더의 브랜드/로그인 사이에 끼워 넣을
@@ -1287,7 +1316,7 @@ def _render_dong_search_box():
     codes = [c for c, _ in options]
     labels = [n for _, n in options]
 
-    idx = st.selectbox(
+    st.selectbox(
         "동 이름으로 검색",
         options=range(len(labels)),
         format_func=lambda i: labels[i],
@@ -1296,21 +1325,58 @@ def _render_dong_search_box():
         key="dong_search_select",
         label_visibility="collapsed",
         width=280,
+        on_change=_select_search_region,
+        args=(codes, points),
     )
-    if idx is not None:
-        code = codes[idx]
-        point = points.get(code)
-        if point:
-            new_click = {"lat": point["lat"], "lng": point["lng"]}
-            if st.session_state.get("region_click") != new_click:
-                st.session_state["region_click"] = new_click
-                st.rerun()
 
 
 def _reset_region_selection() -> None:
     """전체 지도 복귀 시 검색 선택도 함께 비워 즉시 재진입하는 것을 막는다."""
     st.session_state["region_click"] = None
     st.session_state["dong_search_select"] = None
+
+
+def _sync_map_interaction() -> None:
+    """Folium 이벤트를 리런 전에 세션 상태와 동기화한다.
+
+    streamlit-folium의 on_change 콜백은 본문을 다시 그리기 전에 실행된다. 따라서
+    기존처럼 지도 렌더 뒤에 st.rerun()을 한 번 더 호출하지 않아도 클릭한 동 지도를
+    바로 그릴 수 있다. 선택 상태에서 zoom 11 이하가 되면 전체 자치구 보기로 복귀한다.
+    """
+    if auth.get_screen_mode() not in ("GUEST", "NEW_MEMBER"):
+        return
+
+    map_state = st.session_state.get("main_map") or {}
+    current_click = st.session_state.get("region_click")
+    zoom = map_state.get("zoom")
+    if (
+        current_click
+        and isinstance(zoom, (int, float))
+        and zoom <= _DISTRICT_MAP_RESET_ZOOM
+    ):
+        _reset_region_selection()
+        return
+
+    last_clicked = map_state.get("last_clicked")
+    if not isinstance(last_clicked, dict):
+        return
+    try:
+        new_click = {
+            "lat": float(last_clicked["lat"]),
+            "lng": float(last_clicked["lng"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return
+    if current_click == new_click:
+        return
+
+    st.session_state["region_click"] = new_click
+    st.session_state["dong_search_select"] = None
+    clicked_dong = _nearest_dong(new_click["lat"], new_click["lng"])
+    if clicked_dong:
+        user = auth.current_user()
+        increment_dong_view(clicked_dong, user["user_type"] if user else None)
+        increment_user_view(user["user_id"] if user else None, clicked_dong)
 
 
 def _render_hot_dong_panel():
@@ -1869,15 +1935,13 @@ def main():
     mode = auth.get_screen_mode()
     user = auth.current_user()
     owner_snapshot = _owner_latest_snapshot(user["store_id"]) if mode == "OWNER" else None
+    st.session_state.setdefault("region_click", None)
 
     _render_top_header(mode, user, owner_snapshot, show_search=mode in ("GUEST", "NEW_MEMBER"))
 
     if mode == "ADMIN":
         st.info("관리자 계정으로 로그인하셨어요. 위에서 관리자 대시보드로 이동해주세요.")
         return
-
-    if "region_click" not in st.session_state:
-        st.session_state["region_click"] = None
 
     col_map, col_panel = st.columns([65, 35], gap="medium")
 
@@ -1887,25 +1951,26 @@ def main():
             st.subheader("내 가게 위치" if mode == "OWNER" else "우리 동네 상권 지도")
             st.caption("지도에서 관심 지역을 선택하면 오른쪽에서 상세 지표를 확인할 수 있어요.")
 
-            # 지도 계산과 클릭 처리 로직은 그대로 두고 카드 안으로만 옮긴다.
+            # 반환 객체를 클릭/줌으로 제한하면 단순 이동(pan)에는 앱이 리런되지 않는다.
+            # on_change가 새 상태를 본문 렌더 전에 반영해 선택 시 이중 리런도 방지한다.
             fmap, map_height = _build_map(mode, owner_snapshot, st.session_state["region_click"])
-            map_state = st_folium(fmap, height=map_height, width=_MAP_WIDTH, key="main_map")
+            st_folium(
+                fmap,
+                height=map_height,
+                width=None,
+                key="main_map",
+                returned_objects=("last_clicked", "zoom"),
+                on_change=_sync_map_interaction,
+            )
         if mode != "OWNER":
             if st.session_state["region_click"]:
-                st.caption("행정동 단위 보기 · 선택한 동은 주황색으로 표시돼요.")
+                st.caption(
+                    "행정동 단위 보기 · 충분히 축소하면 서울 전체 지도로 돌아가요."
+                )
             else:
                 st.caption(
                     "자치구 단위 보기 · 옅을수록 폐업위험이 낮고 진할수록 높아요."
                 )
-            if mode != "OWNER" and map_state and map_state.get("last_clicked"):
-                st.session_state["region_click"] = map_state["last_clicked"]
-                clicked_dong = _nearest_dong(
-                    map_state["last_clicked"]["lat"], map_state["last_clicked"]["lng"]
-                )
-                if clicked_dong:
-                    increment_dong_view(clicked_dong, user["user_type"] if user else None)
-                    increment_user_view(user["user_id"] if user else None, clicked_dong)
-                st.rerun()
 
     with col_panel:
         with st.container(border=True, key="insight_panel"):
