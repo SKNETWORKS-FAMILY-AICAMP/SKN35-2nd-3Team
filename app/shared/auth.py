@@ -14,6 +14,7 @@
 """
 
 import hashlib
+import secrets
 
 import streamlit as st
 from sqlalchemy import text
@@ -36,6 +37,15 @@ def _hash_password(raw: str) -> str:
 # ---------------------------------------------------------------
 _SESSION_KEYS = ("user_id", "user_type", "store_id", "login_id")
 
+# st.session_state는 WebSocket 연결 하나에만 붙어 있는 값이라, 새로고침(F5)처럼
+# 연결이 새로 맺어지면 그냥 다 사라져서 로그인이 풀린다(2026-08-31 사용자 제보).
+# 반면 URL은 새로고침해도 그대로 남아있으므로, 로그인할 때 발급한 토큰을 URL 쿼리
+# 파라미터에 붙여두고 그 토큰으로 세션 정보를 찾을 수 있는 서버 메모리 저장소를
+# 둔다. 모듈 전역 dict라 앱 프로세스가 살아있는 동안(재배포/재시작 전까지)만
+# 유지되지만, 그 정도면 "새로고침에 로그인이 풀리는" 원래 문제는 충분히 해결된다.
+_SESSION_STORE: dict[str, dict] = {}
+_SESSION_TOKEN_PARAM = "st"
+
 # 로그인/로그아웃/역할 전환 시 같이 비워야 하는 화면 상태(2026-08-30 추가).
 # chatbot_history/chatbot_context를 안 비우면, 예비창업자로 로그인해서 챗봇과
 # 대화한 뒤 기존점주로 재로그인해도 이전 역할일 때의 대화 기록이 그대로
@@ -47,6 +57,18 @@ _CHAT_SESSION_KEYS = ("chatbot_history", "chatbot_context")
 
 def is_logged_in() -> bool:
     return st.session_state.get("user_id") is not None
+
+
+def home_url() -> str:
+    """로고 클릭 등으로 앱 홈("/")으로 돌아갈 때 쓸 링크. 로그인 상태면 세션 토큰을
+    쿼리 파라미터로 붙여서 돌려준다 — 로고가 지금까지 그냥 <a href="/">라 클릭하면
+    브라우저가 진짜 페이지를 새로 요청했는데(세션 유지용 st.page_link가 아니라 raw
+    HTML 링크라 Streamlit 프론트엔드가 클릭을 가로채지 못함), 그 URL에 토큰이 아예
+    없어서 restore_session_from_url()이 복원할 게 없어 로그아웃된 것처럼 보였다
+    (2026-08-31 확인). 토큰을 링크에 미리 심어두면 새로 열리는 세션에서 그대로
+    복원된다."""
+    token = st.session_state.get("_session_token")
+    return f"/?{_SESSION_TOKEN_PARAM}={token}" if token else "/"
 
 
 def current_user() -> dict | None:
@@ -75,10 +97,53 @@ def _set_session(user_id: str, user_type: str, store_id: str | None, login_id: s
     st.session_state["login_id"] = login_id
     _clear_chat_session()
 
+    token = secrets.token_urlsafe(24)
+    _SESSION_STORE[token] = {
+        "user_id": user_id, "user_type": user_type, "store_id": store_id, "login_id": login_id,
+    }
+    st.session_state["_session_token"] = token
+    st.query_params[_SESSION_TOKEN_PARAM] = token
+
+
+def restore_session_from_url() -> None:
+    """새로고침 등으로 session_state가 비어있을 때 URL의 토큰으로 로그인 상태를
+    복원한다. 로그인 여부를 확인하는 페이지라면(app.py, login.py, mypage.py,
+    admin_dashboard.py 전부) auth.current_user()를 부르기 전에 가장 먼저 호출해야
+    한다.
+
+    로그인 직후에는 반대 방향도 챙겨야 한다 — login.py는 로그인 성공 즉시
+    st.switch_page()로 다른 페이지로 넘어가는데, 그 이동이 직전에 _set_session()이
+    URL에 심어둔 토큰을 들고 가지 않고 도착 페이지의 맨 URL로 가버린다(확인함,
+    2026-08-31). 그래서 로그인은 됐는데 URL에는 토큰이 없는 상태로 도착하는데,
+    이 함수가 도착한 페이지에서 한 번 더 실행되니 그때 토큰을 다시 심어준다."""
+    if not is_logged_in():
+        token = st.query_params.get(_SESSION_TOKEN_PARAM)
+        if not token:
+            return
+        info = _SESSION_STORE.get(token)
+        if info is None:
+            return
+        st.session_state["user_id"] = info["user_id"]
+        st.session_state["user_type"] = info["user_type"]
+        st.session_state["store_id"] = info["store_id"]
+        st.session_state["login_id"] = info["login_id"]
+        st.session_state["_session_token"] = token
+        return
+
+    my_token = st.session_state.get("_session_token")
+    if my_token and st.query_params.get(_SESSION_TOKEN_PARAM) != my_token:
+        st.query_params[_SESSION_TOKEN_PARAM] = my_token
+
 
 def logout() -> None:
+    token = st.session_state.get("_session_token")
+    if token:
+        _SESSION_STORE.pop(token, None)
     for key in _SESSION_KEYS:
         st.session_state.pop(key, None)
+    st.session_state.pop("_session_token", None)
+    if _SESSION_TOKEN_PARAM in st.query_params:
+        del st.query_params[_SESSION_TOKEN_PARAM]
     _clear_chat_session()
 
 
