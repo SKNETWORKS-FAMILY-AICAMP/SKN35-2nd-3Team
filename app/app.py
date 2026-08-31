@@ -2332,7 +2332,7 @@ def _brand_logo_base64() -> str | None:
 def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None, show_search: bool):
     """시안처럼 브랜드는 왼쪽, 검색과 계정 액션은 오른쪽에 한 줄로 배치한다."""
     with st.container(key="top_header"):
-        col_brand, col_actions = st.columns([5, 5], gap="large", vertical_alignment="center")
+        col_brand, col_actions = st.columns([3, 7], gap="large", vertical_alignment="center")
 
         with col_brand:
             with st.container(key="brand_block", gap=None):
@@ -2353,7 +2353,6 @@ def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None
                         icon=":material/location_city:",
                         width="content",
                     )
-                st.caption("데이터로 먼저 보는 우리 동네 상권")
 
         with col_actions:
             with st.container(
@@ -2403,6 +2402,14 @@ def _render_top_header(mode: str, user: dict | None, owner_snapshot: dict | None
                             icon=":material/person:",
                             width="content",
                         )
+
+                    if st.button(
+                        "상담 챗봇",
+                        key="open_chatbot",
+                        icon=":material/chat:",
+                        width="content",
+                    ):
+                        _render_chatbot_dialog()
 
                     if st.button(
                         "로그아웃",
@@ -2460,10 +2467,7 @@ def main():
                     "자치구 단위 보기 · 옅을수록 폐업위험이 낮고 진할수록 높아요."
                 )
 
-            # 챗봇 진입 버튼(2026-08-28 추가) — 위치는 아직 최종 확정 아님, 우선
-        # 지도 바로 아래에 배치. st.dialog로 모달을 띄운다.
-        if st.button("💬 상담 챗봇", key="open_chatbot"):
-            _render_chatbot_dialog()
+            
 
     with col_panel:
         with st.container(border=True, key="insight_panel"):
