@@ -77,7 +77,6 @@ with st.container(key="top_logo"):
         unsafe_allow_html=True,
     )
 
-st.title("로그인")
 
 user = auth.current_user()
 if user is not None:
@@ -95,7 +94,7 @@ if user is not None:
 
 st.subheader("로그인")
 login_id = st.text_input("아이디 (기존점주는 가게 코드)", key="login_id_input")
-password = st.text_input("비밀번호 (기존점주는 1234)", type="password", key="login_pw_input")
+password = st.text_input("비밀번호", type="password", key="login_pw_input")
 if st.button("로그인", key="btn_unified_login"):
     ok, msg = auth.login_unified(login_id, password)
     if ok:
