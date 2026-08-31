@@ -30,15 +30,7 @@
 
 ## 👥 팀원
 
-<img src="./app/assets/w_tiger.png" width="90"> <img src="./app/assets/blue_d.png" width="90"> <img src="./app/assets/jujak.png" width="90"> <img src="./app/assets/heichi.png" width="90"> <img src="./app/assets/yolo.png" width="90">
-
-- **고태민** — `ALL` (ML/DL 모델링 · DB 연동 · 데이터 파이프라인) · [@taemin1997](https://github.com/taemin1997)
-- **심성욱** — `모델링 ML B`
-- **정진봉** — `팀장` `Streamlit UI` `모델링 DL` `발표 및 PPT`
-- **박민하** — `데이터 전처리` `UI`
-- **박종원** — `모델링 ML A` `데이터 전처리`
-
-> 이미지 출처: `app/assets/` (w_tiger·blue_d·jujak·heichi·yolo). GitHub 프로필 링크는 아는 만큼만 채워뒀어요 — 나머지는 각자 추가해주세요.
+<img src="./app/assets/heichi.png" width="90"> <img src="./app/assets/w_tiger.png" width="90"> <img src="./app/assets/yolo.png" width="90"> <img src="./app/assets/jujak.png" width="90"> <img src="./app/assets/blue_d.png" width="90">
 
 ## 🛠️ 기술 스택
 
