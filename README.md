@@ -1,143 +1,197 @@
-# 서울 상권 폐업예측 프로젝트 — 폴더 구조 안내
+# 🏪 서울 상권 폐업 위험 예측 — 우리 동네, 우리 가게는 안전할까?
 
-5인 팀 병렬 작업을 전제로 짠 구조입니다. `db/`, `features/`, `models/`는 `src/project_2nd/`
-패키지 밑으로 통합돼 있고(`pyproject.toml`이 `uv_build` 기반이라 이 위치가 정식 패키지
-경로), `app/`, `data/`, `docs/`, `notebooks/`는 패키지 코드가 아니라서 최상위에 그대로 둡니다.
+> "이 자리에 이 업종, 지금 시작해도 괜찮을까?" 예비창업자·기존점주·관리자 세 유형에 맞춰, 서울시 상가업소 데이터와 생활인구 데이터로 학습한 모델이 상권별·업종별 폐업 위험도를 계산해주는 Streamlit 웹 애플리케이션입니다.
+
+<p>
+<img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+<img src="https://img.shields.io/badge/Streamlit-1.60+-FF4B4B?logo=streamlit&logoColor=white">
+<img src="https://img.shields.io/badge/TiDB%20Cloud-MySQL%20호환-4479A1?logo=mysql&logoColor=white">
+<img src="https://img.shields.io/badge/uv-package%20manager-DE5FE9">
+<img src="https://img.shields.io/badge/LightGBM%20%7C%20ExtraTrees%20%7C%20DNN-ML%2FDL-F7931E">
+<img src="https://img.shields.io/badge/SHAP-설명가능성-8A2BE2">
+<img src="https://img.shields.io/badge/Gemini%20API-상담%20챗봇-4285F4?logo=googlegemini&logoColor=white">
+</p>
 
 ---
 
-## 최상위 구조
+## 📌 서비스명
 
-```
+**서울 상권 폐업 위험 예측 시스템** — 상권 데이터 기반 폐업 위험도 진단 & 업종/입지 추천 서비스
+
+## 📖 프로젝트 개요
+
+신규 창업 3년 내 폐업률이 절반에 가까운 상황에서, "감"이 아니라 **실제 상가업소 데이터와 생활인구 데이터**로 상권과 업종의 생존 가능성을 미리 가늠해볼 수 있게 만든 서비스입니다. 로그인한 사용자 유형에 따라 화면과 기능이 달라집니다.
+
+- 🧭 **예비창업자**: 관심 지역·업종의 위험도/추천도 점수 확인, "관심 업종으로 동네 찾기"로 반경 300m 경쟁밀도 기반 추천 동네 탐색
+- 🏪 **기존점주**: 내 가게 개인화 폐업 위험 점수 + SHAP 기반 근거 설명 + Wilson score 하한 기반 업종전환 추천
+- 🛡️ **관리자**: 고위험 상권 모니터링 대시보드, 지원 조치(support_actions) 이력 추적
+- 🔥 **지금 뜨는 사업 탐지**: 실제 상호명 키워드(탕후루, 버터떡 등) 매장수를 6개 스냅샷에 걸쳐 집계해 증가율로 트렌드를 탐지 (더미 데이터 없이 실측 기반)
+- 💬 **상담 챗봇**: 화면에 떠 있는 실제 DB 조회 결과 또는 메시지에서 직접 추출한 동/업종 정보를 근거로만 답하도록 설계해 환각(hallucination)을 최소화
+
+## 👥 팀원
+
+<img src="./app/assets/w_tiger.png" width="90"> <img src="./app/assets/blue_d.png" width="90"> <img src="./app/assets/jujak.png" width="90"> <img src="./app/assets/heichi.png" width="90"> <img src="./app/assets/yolo.png" width="90">
+
+- **고태민** — `ALL` (ML/DL 모델링 · DB 연동 · 데이터 파이프라인) · [@taemin1997](https://github.com/taemin1997)
+- **심성욱** — `모델링 ML B`
+- **정진봉** — `팀장` `Streamlit UI` `모델링 DL` `발표 및 PPT`
+- **박민하** — `데이터 전처리` `UI`
+- **박종원** — `모델링 ML A` `데이터 전처리`
+
+> 이미지 출처: `app/assets/` (w_tiger·blue_d·jujak·heichi·yolo). GitHub 프로필 링크는 아는 만큼만 채워뒀어요 — 나머지는 각자 추가해주세요.
+
+## 🛠️ 기술 스택
+
+| 분류 | 기술 |
+| --- | --- |
+| Language | ![Python](https://img.shields.io/badge/Python%203.12-3776AB?logo=python&logoColor=white) |
+| Frontend / App | ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white) |
+| Database | ![TiDB](https://img.shields.io/badge/TiDB%20Cloud-4479A1?logo=mysql&logoColor=white) ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?logoColor=white) ![PyMySQL](https://img.shields.io/badge/PyMySQL-4479A1?logoColor=white) |
+| ML | ![LightGBM](https://img.shields.io/badge/LightGBM-baseline-9ACD32) ![ExtraTrees](https://img.shields.io/badge/ExtraTrees-최종%20채택-2E8B57) ![Optuna](https://img.shields.io/badge/Optuna-하이퍼파라미터튜닝-0078D4) |
+| DL | ![PyTorch](https://img.shields.io/badge/DNN%2FMLP-5--fold%20ensemble-EE4C2C) |
+| 설명가능성 | ![SHAP](https://img.shields.io/badge/SHAP-TreeExplainer%20%2F%20KernelExplainer-8A2BE2) |
+| 공간 연산 | ![scipy](https://img.shields.io/badge/BallTree%20(haversine)-scipy-8CAAE6?logo=scipy&logoColor=white) |
+| 지도 시각화 | ![folium](https://img.shields.io/badge/folium-OpenStreetMap-77B829) |
+| 챗봇 | ![Gemini](https://img.shields.io/badge/Gemini%20API-google--genai-4285F4?logo=googlegemini&logoColor=white) |
+| 환경/패키지 관리 | ![uv](https://img.shields.io/badge/uv-DE5FE9?logoColor=white) ![python-dotenv](https://img.shields.io/badge/python--dotenv-ECD53F?logoColor=black) |
+
+## 🧩 핵심 기술
+
+- **생존점수 변환**: 모델이 출력하는 폐업확률(p)을 `생존점수 = (1 - p) × 100`으로 변환해 UI에 노출. 다만 calibration 검증이 안 된 원본 확률이라, 절대 점수보다 **"서울 423개 동 중 O위"** 같은 상대 순위로 표현
+- **패널 데이터 누수 방지**: 동일 점포가 6개 스냅샷에 반복 등장하는 구조라, `GroupKFold`(K=5, store_id 해시)로 같은 점포가 Train/Test에 동시에 들어가지 않도록 분할
+- **행정동 코드 버전 불일치 처리**: 생활인구(2016년 코드) ↔ 상가업소(현행 코드) 불일치를 `BallTree` 최근접 이웃으로 대체하고 `population_is_proxied` 플래그로 투명하게 표시
+- **Wilson score 하한 기반 추천 정렬**: 업종전환 추천에서 표본 1~2건짜리가 100점으로 부풀려지는 문제를 방지
+- **모델 자동 승격 파이프라인**: `load_models_and_predictions.py --auto-promote-best`가 `roc_auc` 기준으로 최신 최고 성능 모델을 자동으로 프로덕션에 반영
+- **역할 분리형 데이터 흐름**: 모델 담당은 JSON으로 결과를 저장 → DB 담당이 적재 → 각자 병렬로 작업 가능
+
+## 🗂️ Project Structure
+
+```text
 SKN35-2nd-3Team/
-├── src/
-│   └── project_2nd/       db·features·models를 통합한 파이썬 패키지 (아래 1~4번)
-├── data/                   데이터 원본부터 최종 피처까지 단계별 저장
-├── app/                    Streamlit 앱 (사용자 그룹별 화면)
-├── docs/                   설계/로드맵/제안서/방법론 문서
-├── notebooks/               EDA·실험용 노트북
-├── pyproject.toml           패키지 정의 (uv_build, src/project_2nd 자동 인식)
-├── requirements.txt         데이터/모델 파이프라인 의존성
-├── uv.lock
-├── run_pipeline.sh          파이프라인 전체 자동 실행 (Mac/Linux/Git Bash용)
-├── run_pipeline.ps1         파이프라인 전체 자동 실행 (Windows PowerShell용)
-├── .env / .env.example      TiDB 연결 정보 (.env는 git에 안 올라감)
+├── data/                      # 데이터 파이프라인 단계별 저장 (raw → processed → labeled → features)
+├── db/                        # DB 스키마·ERD·적재(ETL) 스크립트
+│   ├── schema.sql
+│   ├── erd.png / erd.dot
+│   └── etl/
+├── features/                  # 피처 엔지니어링
+│   ├── spatial/                #   BallTree/Haversine 기반 반경 내 경쟁업소 밀도
+│   ├── industry_grouping/      #   업종명 기반 그룹핑
+│   ├── trend_keywords/         #   '지금 뜨는 사업' 키워드 트렌드 탐지
+│   └── survival_transition/    #   업종 전환 이력 기반 생존율
+├── models/                    # ML/DL 모델링
+│   ├── ml/                     #   LightGBM, ExtraTrees(Optuna 튜닝) 등
+│   ├── dl/                     #   DNN/MLP (5-fold 앙상블)
+│   └── shap/                   #   SHAP 기반 설명가능성
+├── app/                       # Streamlit 앱
+│   ├── app.py                  #   진입점 — 로그인 라우팅 (founder/owner/admin)
+│   ├── pages/                  #   화면별 페이지
+│   └── shared/                 #   공용 모듈 — auth.py, db.py, components.py, llm_client.py
+├── docs/                       # 설계/로드맵/결과서 문서
+├── notebooks/                  # EDA·실험용 노트북
+├── requirements.txt
 └── .gitignore
 ```
 
----
+## 🗄️ ERD
 
-## 0. `src/project_2nd/` — 패키지 루트
+`db/erd.png` 참고 (13개 테이블, TiDB Cloud/MySQL 호환).
 
-| 파일 | 내용 |
-|---|---|
-| `src/project_2nd/__init__.py` | 패키지 진입점 |
-| `src/project_2nd/db/` | 1번 |
-| `src/project_2nd/features/` | 2번 |
-| `src/project_2nd/models/` | 3번 |
+주요 테이블 관계 요약:
 
-각 하위 폴더에는 빈 `__init__.py`를 하나씩 둬서 정식 임포트가 가능하게 합니다.
-
----
-
-## 1. `src/project_2nd/db/` — DB 설계 및 적재
-
-| 파일 | 내용 |
-|---|---|
-| `db/schema.sql` | 테이블 DDL (13개 테이블) |
-| `db/erd.dot`, `db/erd.png` | ERD 다이어그램 |
-| `db/테이블_설명.md` | 테이블별 상세 설명 |
-| `db/etl/build_closure_transitions.py` | 폐업 라벨·업종전환 이력 생성 |
-| `db/etl/build_store_snapshots.py` | 스냅샷별 매장 테이블(`store_snapshots.csv`) + 매장 마스터(`stores.csv`) 생성 |
-| `db/etl/load_to_tidb.py` | `schema.sql`로 13개 테이블 생성 + `data/features/*.csv`를 FK 순서에 맞춰 TiDB에 적재 |
-
-**적재 실행**: `.env`에 TiDB Cloud 접속정보 채운 뒤 `python src/project_2nd/db/etl/load_to_tidb.py` — `administrative_dongs`, `industries`, `stores`, `store_snapshots`, `population_features`, `spatial_density_features`, `trend_keywords`, `industry_transitions`, `industry_survival_stats` 9개 테이블이 채워진다. `users`/`models`/`predictions`/`support_actions` 4개는 앱이 실제로 돌아가면서 채워지는 운영 데이터라 테이블만 생성되고 비어있다(4번 참고).
-
----
-
-## 2. `src/project_2nd/features/` — 피처 엔지니어링
-
-| 폴더 | 내용 |
-|---|---|
-| `features/spatial/` | `build_spatial_features.py`(BallTree/Haversine 기반 밀도 피처 4종), `build_population_features.py`(생활인구 피처) |
-| `features/industry_grouping/` | `build_industries.py` — 업종 소분류(247개)를 대분류(10개) 커스텀 그룹으로 매핑 |
-| `features/trend_keywords/` | `build_trend_keywords.py` — 상호명 키워드 기반 '지금 뜨는 사업' 탐지, 6개 스냅샷 매장수 증가율 계산 (실데이터 기반, 더미 없음) |
-| `features/survival_transition/` | `build_survival_stats.py` — 업종 전환 이력 기반 생존율 피처 |
-
----
-
-## 3. `src/project_2nd/models/` — 모델링
-
-| 폴더 | 내용 |
-|---|---|
-| `models/ml/build_modeling_dataset.py` | 위 피처들을 전부 합쳐 학습용 최종 데이터셋(`modeling_dataset.csv`) 조립. GroupKFold 배정, fold-safe 과거폐업률 인코딩, 스코프 제외(과학·기술/부동산/시설관리·임대) 포함 |
-| `models/ml/` (베이스라인 학습, 임계값 튜닝) | 팀원이 직접 작성 중 |
-| `models/dl/` | 딥러닝(MLP 등) — 아직 코드 없음, 폴더만 존재 |
-| `models/shap/` | SHAP 기반 설명가능성 — 아직 코드 없음, 폴더만 존재 |
-
----
-
-## 4. `app/` — 화면 (Streamlit, 사용자 그룹별) — 최상위 유지
-
-| 파일/폴더 | 내용 |
-|---|---|
-| `app/app.py` | 진입점. 사용자 유형 선택 → 로그인 라우팅 (현재 스텁) |
-| `app/requirements.txt` | 앱 실행 전용 의존성 |
-| `app/build_features_and_model.py` | 서빙용 피처+모델 준비 스크립트 (현재 스텁) |
-| `app/pages/` | 실제 화면 6개, 파일명 숫자 prefix로 사이드바 순서 제어 (현재 스텁) |
-| `app/shared/db.py` | TiDB 연결 유틸(`get_engine`) — **구현 완료** |
-| `app/shared/write_user.py` | `users` 테이블에 로그인/회원가입 기록 — 함수 구현 완료, 호출부(`auth.py`)는 아직 |
-| `app/shared/write_model.py` | `models` 테이블에 학습된 모델 등록 — 함수 구현 완료, 학습 스크립트에서 호출 필요 |
-| `app/shared/write_prediction.py` | `predictions` 테이블에 예측+SHAP 결과 기록 — 함수 구현 완료, 예측 화면에서 호출 필요 |
-| `app/shared/write_support_action.py` | `support_actions` 테이블에 관리자 조치 기록 — 함수 구현 완료, 관리자 화면에서 호출 필요 |
-| `app/shared/auth.py`, `components.py` | 로그인 로직, 공용 UI — 현재 스텁 |
-| `app/founder/`, `app/owner/`, `app/admin/` | 유형별 로직 모듈 — 현재 빈 폴더 |
-
-**write_*.py 4개는 "완성된 부품"이고, 아직 어디서도 호출되고 있지 않다.** 로그인 화면이 완성되면 `write_user.create_user()`를, 모델 학습이 끝나면 `write_model.register_model()`을, 예측 화면이 완성되면 `write_prediction.log_prediction()`을, 관리자 조치 폼이 완성되면 `write_support_action.log_support_action()`을 그 자리에서 호출하기만 하면 된다.
-
-**실행 방법(예정)**
-```
-pip install -r requirements.txt          # 데이터/모델 파이프라인
-pip install -r app/requirements.txt      # 앱 전용
-python app/build_features_and_model.py   # 서빙용 피처+모델 준비 (최초 1회)
-streamlit run app/app.py
+```text
+stores 1─N store_snapshots            (점포별 스냅샷 6회, 폐업 여부 is_closed_next)
+administrative_dongs 1─N store_snapshots
+industries 1─N store_snapshots
+industries 1─N industry_survival_stats  (업종전환 생존율)
+stores 1─N spatial_density_features    (반경 300m 경쟁 밀도)
+administrative_dongs 1─N population_features (생활인구)
+users 1─N predictions                  (예측 결과 캐시)
+users 1─N support_actions              (관리자 개입 이력)
 ```
 
----
+## 🤖 모델 성능
 
-## 5. `data/` — 데이터 파이프라인 단계 (최상위 유지)
+`GroupKFold`(K=5, store_id 해시 기준) 검증 기준, 약 188만 행(소비자 대면 9개 업종군, 폐업률 10.6%) 학습.
 
-| 폴더 | 내용 |
-|---|---|
-| `data/raw/` | 원본 CSV 전부. 소상공인은 `seoul_YYYYMM.csv`, 생활인구는 `local_pop.csv`/`longf_pop.csv`/`tempf_pop.csv` |
-| `data/features/` | 최종 피처 테이블. 파이프라인의 실질적인 출력 폴더 |
-| `data/processed/`, `data/labeled/` | **현재 미사용.** 원래 `raw → processed(정리) → labeled(라벨링) → features` 4단계로 설계했지만, 실제 원본 데이터가 인코딩 문제 없이 깨끗했고 폐업 라벨링도 `store_snapshots` 생성 단계에 바로 통합돼서 `raw → features` 2단계로 단순화됐다. 두 폴더 다 어떤 스크립트에서도 참조하지 않으므로 삭제해도 무방하다. |
+| 모델 ID | 모델명 | 버전 | 유형 | 정확도 | 정밀도 | 재현율 | F1 | ROC-AUC | PR-AUC | 운영 반영 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `pmh_ml_extratrees_pjw_v1` | ExtraTreesClassifier (Optuna tuned) | 1.0 | ML | 0.888 | 0.4668 | 0.3578 | 0.4051 | **0.7486** | 약 0.40 | ✅ |
+| `dnn_mlp_v2` | DNN (5-fold ensemble) | 2.0 | DL | 0.855 | 0.3324 | 0.3524 | 0.3417 | 0.7233 | `[TODO]` | ☐ |
+| (베이스라인) LightGBM | LightGBM | - | ML | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | 약 0.721\~0.725 | 0.300 | ☐ |
 
-(`data/` 하위 산출물은 `.gitignore`에서 제외되지만, `data/features/`의 작은 참고용 CSV 5개(`industries.csv`, `trend_keywords.csv`, `industry_survival_stats.csv`, `industry_transitions.csv`, `population_features.csv`)는 예외적으로 git에 포함된다.)
+**최종 채택 모델**: **ExtraTreesClassifier (`pmh_ml_extratrees_pjw_v1`)** — LightGBM 베이스라인과 DNN 둘 다보다 ROC-AUC가 높아 `--auto-promote-best` 기준으로 프로덕션에 자동 반영됨.
 
----
+> ⚠️ Accuracy(0.888)는 기저 폐업률(10.6%)이 낮은 데이터 특성상 단독으로는 성능 근거가 되기 어렵습니다. **ROC-AUC·PR-AUC·F1을 함께 봐야 합니다.** 자세한 내용은 [`docs/02_AI_학습_결과서.md`](./docs/02_AI_학습_결과서.md) 참고.
 
-## 6. `docs/` — 문서 (최상위 유지)
+## 📄 산출물
 
-## 7. `notebooks/` — 실험 (최상위 유지)
+- [`docs/01_데이터_전처리_결과서.md`](./docs/01_데이터_전처리_결과서.md) — 인공지능 데이터 전처리 결과서
+- [`docs/02_AI_학습_결과서.md`](./docs/02_AI_학습_결과서.md) — 인공지능 학습 결과서
+- [`docs/03_학습된_모델_설명.md`](./docs/03_학습된_모델_설명.md) — 학습된 인공지능 모델 설명
+- 발표 PPT — `[TODO: 링크 추가]`
 
----
+## ⚙️ 실행 방법
 
-## 참고: 진행 상태
+필요한 도구: `Git`, `uv`
 
-**완료됨**
-- `src/project_2nd/db/etl/` — 원본 CSV → 폐업라벨/업종전환/store_snapshots/stores 생성
-- `src/project_2nd/db/etl/load_to_tidb.py` — 9개 테이블 TiDB 적재 스크립트, 각 스크립트 출력 컬럼과 1:1 대조 검증 완료
-- `src/project_2nd/features/` — 공간밀도, 업종 마스터, 트렌드키워드, 생존율 통계, 생활인구
-- `src/project_2nd/models/ml/build_modeling_dataset.py` — 학습용 데이터셋 조립 (스코프 제외 포함)
-- `src/project_2nd/db/erd.dot`, `db/테이블_설명.md`, `db/schema.sql` — 13개 테이블 ERD + DDL, `dong_code`/`shap_top_features` 반영
-- `app/shared/db.py`, `write_user.py`, `write_model.py`, `write_prediction.py`, `write_support_action.py` — DB 연결 및 4개 테이블 쓰기 함수
-- `run_pipeline.sh` / `run_pipeline.ps1` — Mac·Linux·Windows 전부 지원, 문법 검증 완료
+```bash
+git clone https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN35-2nd-3Team.git
+cd SKN35-2nd-3Team
+uv sync
+```
 
-**아직 안 된 것**
-- 모델 베이스라인 학습·임계값 튜닝 (팀원이 직접 진행 중)
-- `app/`의 각 화면 실제 로직 (진입점, 로그인, 6개 페이지 전부 스텁) — 완성되면 위 write_*.py 함수들을 호출하기만 하면 됨
-- `src/project_2nd/models/dl/`, `src/project_2nd/models/shap/` — 아직 코드 없음
-- Random Forest, MLP와의 성능 비교
-- 카카오맵 API 등 외부 데이터 연동
-- `users`/`models`/`predictions`/`support_actions` 4개 테이블 — 위 앱 로직이 완성돼야 채워짐
+### DB 접속 설정
+
+```bash
+cp .env.example .env   # [TODO: 예시 파일 실제로 추가]
+```
+
+`.env`에 아래 항목을 채웁니다 (`app/shared/db.py` 참고, `DB_` 접두사 사용 — Windows의 `USERNAME` 환경변수와 충돌 방지).
+
+```
+DB_HOST=...
+DB_PORT=4000
+DB_USERNAME=...
+DB_PASSWORD=...
+DB_DATABASE=...
+GEMINI_API_KEY=...   # 챗봇용, 각자 https://aistudio.google.com/ 에서 무료 발급
+```
+
+### 앱 실행
+
+```bash
+uv run python -m streamlit run app/app.py
+```
+
+> ⚠️ `streamlit run app/app.py`를 직접 실행하면 uv trampoline 에러가 발생합니다. 반드시 `uv run python -m streamlit run ...` 형태로 실행하세요.
+
+### 모델 파이프라인 (선택 — 이미 학습된 모델을 쓰는 경우 생략 가능)
+
+```bash
+# 1) 피처 생성 → 2) 모델링 데이터셋 조립 → 3) 모델 학습 → 4) DB 적재
+python build_modeling_dataset.py
+python dl_train_tm.py                              # DNN
+[TODO: ExtraTrees/LightGBM 학습 스크립트 커맨드]
+python load_models_and_predictions.py --auto-promote-best
+```
+
+## ⚠️ 한계점 및 트러블슈팅
+
+| 행정동 코드 버전 불일치 | 클래스 불균형 | 모델링 제외 업종 | 좌표 중복 |
+| --- | --- | --- | --- |
+| 🗺️ 2016년 vs 현행 코드 | ⚖️ 폐업률 10.6% | 🚫 학습 대상 아닌 업종군 존재 | 🏢 대형 복합건물 |
+
+- **행정동 코드 버전 불일치**: 생활인구 데이터는 2016년 행정동 코드, 상가업소 데이터는 현행 코드 기준이라 강북구 수유동 등 12개 동에서 매칭이 안 됐습니다. `BallTree` 최근접 이웃 대체 + `population_is_proxied` 플래그로 투명하게 구분해 처리했습니다.
+- **클래스 불균형(폐업률 10.6%)**: Accuracy만으로는 성능을 판단할 수 없어 ROC-AUC/PR-AUC/F1을 함께 리포트했고, 서비스 화면에서도 절대 확률 대신 상대 순위로 표현해 과신을 방지했습니다.
+- **모델링 제외 업종**: 과학·기술/부동산/시설관리·임대 업종군은 애초에 학습 대상이 아니라서, 챗봇/화면에서 해당 업종을 물어보면 "예측 대상 아님"으로 명확히 안내하도록 처리했습니다.
+- **좌표 중복(대형 복합건물)**: 송파구 등에서 883개 상점이 동일 좌표를 공유하는 문제를 `DBSCAN` 클러스터링으로 탐지하고 `coord_cluster_size` 피처로 반영했습니다.
+- **업종전환 이벤트 쏠림**: 전환 이벤트의 97%가 특정 시점(202406→202412)에 몰려 있어, 실제 전환 트렌드라기보다 데이터 일괄 재분류일 가능성을 결과서에 명시했습니다.
+
+## 🔗 앞으로의 개선 내역
+
+- [ ] DNN 5-fold 앙상블과 ExtraTrees/LightGBM 최종 3파전 비교표 완성 (DNN·LightGBM 세부 지표 보강)
+- [ ] ExtraTrees PR-AUC 정확한 수치 산출 (현재 약 0.40으로 추정치)
+- [ ] `coord_cluster_size` 피처의 최종 데이터셋 내 성능 기여도 재평가
+- [ ] '지금 뜨는 사업' 탐지에 네이버 데이터랩 검색어트렌드 API 교차검증 추가
+- [ ] 마이페이지(`app/pages/mypage.py`) 연동
+- [ ] SHAP 근거 문장을 사람이 읽기 쉬운 문장으로 매핑하는 테이블 구축
