@@ -30,7 +30,7 @@
 
 ## 👥 팀원
 
-<img src="./app/assets/heichi.png" width="90"> <img src="./app/assets/w_tiger.png" width="90"> <img src="./app/assets/yolo.png" width="90"> <img src="./app/assets/jujak.png" width="90"> <img src="./app/assets/blue_d.png" width="90">
+<img src="./app/assets/heichi.png" width="120"> <img src="./app/assets/w_tiger.png" width="120"> <img src="./app/assets/yolo.png" width="120"> <img src="./app/assets/jujak.png" width="120"> <img src="./app/assets/blue_d.png" width="120">
 
 ## 🛠️ 기술 스택
 
